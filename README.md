@@ -24,6 +24,7 @@
 - **Snooze**: dedicated panel-mount tactile button, front-mounted for easy reach, wired separately from the Feather's onboard top-mounted menu buttons.
 - **Volume**: small panel-mount rotary encoder for physical volume control.
 - **Power**: inline SPDT slide switch on the battery line for a hard on/off.
+- **Menu**: more advanced settings/controls are handled via an on-screen menu on the Feather's built-in TFT, navigated using the Feather's onboard buttons.
 
 ## Enclosure
 
