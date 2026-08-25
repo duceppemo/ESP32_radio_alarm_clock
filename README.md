@@ -25,6 +25,10 @@
 
 Rendered from [`docs/wiring-diagram.html`](docs/wiring-diagram.html), which has the full interactive version plus wiring notes/assumptions.
 
+## Firmware
+
+PlatformIO project targeting the ESP32-S3 via the [pioarduino](https://github.com/pioarduino/platform-espressif32) platform fork. Covers alarm scheduling, FM radio control, an on-device TFT menu, and a WiFi setup/status web dashboard — see [`docs/firmware.md`](docs/firmware.md) for architecture, build instructions, and the dashboard's API. Not yet flashed to real hardware.
+
 ## Controls
 
 - **Snooze**: dedicated panel-mount tactile button, front-mounted for easy reach, wired separately from the Feather's onboard top-mounted menu buttons.
@@ -34,10 +38,8 @@ Rendered from [`docs/wiring-diagram.html`](docs/wiring-diagram.html), which has 
 
 ## Planned Features
 
-- **Web dashboard**: the ESP32-S3's WiFi hosts a web dashboard mirroring the menu items, for faster/easier setup from a phone.
-  - First connection: phone joins the ESP32's own WiFi access point (AP mode).
-  - From the dashboard, the user can then configure the ESP32 to join the home WiFi network.
-  - Once on the home network, the device is reachable at a `.local` (mDNS) address instead of the AP.
+- **Physical snooze/volume input**: the dedicated snooze button and rotary encoder have pins reserved but aren't polled by firmware yet.
+- **Auto-dimming**: use the VEML7700 ambient light reading to dim the 7-segment and TFT displays automatically.
 
 ## Enclosure
 
