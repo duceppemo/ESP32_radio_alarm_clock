@@ -1,58 +1,81 @@
 #include "AlarmSound.h"
 
-#include <math.h>
-
 namespace {
-constexpr float kPi = 3.14159265f;
-constexpr int16_t kAmplitude = 8000;  // headroom below int16 full-scale to avoid clipping
+// Alternating two-tone warble, close to what commercial alarm clocks use.
+// Kept around 1.8-2.2kHz rather than a piezo's ~3-4kHz resonant peak, so
+// it's insistent without being painful.
+constexpr AlarmSound::Step kBeepPattern[] = {
+    {1800, 150},
+    {2200, 150},
+};
+
+// Gentle ascending A-major triad ("ding-ding-dong"), then a pause -- a
+// softer wake, and a friendlier dead-air fallback than a flat buzz.
+constexpr AlarmSound::Step kChimePattern[] = {
+    {880, 150},   // A5
+    {0, 50},
+    {1109, 150},  // C#6
+    {0, 50},
+    {1319, 300},  // E6
+    {0, 600},
+};
+
+template <typename T, size_t N>
+constexpr size_t arraySize(const T (&)[N]) {
+  return N;
+}
 }  // namespace
 
 bool AlarmSound::begin() {
-  i2s_.setPins(Pins::AmpI2sBclk, Pins::AmpI2sLrc, Pins::AmpI2sDin);
-  ready_ = i2s_.begin(I2S_MODE_STD, ToneConfig::SampleRateHz, I2S_DATA_BIT_WIDTH_16BIT,
-                      I2S_SLOT_MODE_MONO);
-  return ready_;
+  pinMode(Pins::Buzzer, OUTPUT);
+  return true;
 }
 
 void AlarmSound::start(Tone tone) {
-  if (!ready_) return;
   tone_ = tone;
-  patternElapsedMs_ = 0;
-  phase_ = 0.0f;
+  patternStartMs_ = millis();
+  lastStepIndex_ = -1;
   active_ = true;
+
+  cycleMs_ = 0;
+  const Step *steps = pattern();
+  for (uint8_t i = 0; i < patternLength(); i++) cycleMs_ += steps[i].durationMs;
 }
 
-void AlarmSound::stop() { active_ = false; }
+void AlarmSound::stop() {
+  active_ = false;
+  noTone(Pins::Buzzer);
+}
+
+const AlarmSound::Step *AlarmSound::pattern() const {
+  return tone_ == Tone::Chime ? kChimePattern : kBeepPattern;
+}
+
+uint8_t AlarmSound::patternLength() const {
+  return tone_ == Tone::Chime ? arraySize(kChimePattern) : arraySize(kBeepPattern);
+}
 
 void AlarmSound::update() {
-  if (!active_ || !ready_) return;
-  int16_t buffer[ToneConfig::ChunkSamples];
-  fillChunk(buffer, ToneConfig::ChunkSamples);
-  i2s_.write(reinterpret_cast<const uint8_t *>(buffer), sizeof(buffer));
-  patternElapsedMs_ += (ToneConfig::ChunkSamples * 1000UL) / ToneConfig::SampleRateHz;
-}
+  if (!active_ || cycleMs_ == 0) return;
 
-void AlarmSound::fillChunk(int16_t *buffer, uint16_t samples) {
-  uint32_t cycleMs = (tone_ == Tone::Chime) ? 800 : 500;
+  const Step *steps = pattern();
+  uint8_t count = patternLength();
+  uint32_t t = (millis() - patternStartMs_) % cycleMs_;
 
-  for (uint16_t i = 0; i < samples; i++) {
-    uint32_t tMs = (patternElapsedMs_ + (i * 1000UL) / ToneConfig::SampleRateHz) % cycleMs;
-    float freq;
-    bool on = true;
+  uint8_t index = 0;
+  uint32_t acc = 0;
+  for (; index < count - 1; index++) {
+    acc += steps[index].durationMs;
+    if (t < acc) break;
+  }
 
-    if (tone_ == Tone::Chime) {
-      freq = (tMs < 400) ? 660.0f : 880.0f;  // two-note chime, no gap
-    } else {
-      on = tMs < 300;  // 300ms on / 200ms off beep
-      freq = 800.0f;
-    }
+  if (index == lastStepIndex_) return;
+  lastStepIndex_ = index;
 
-    if (!on) {
-      buffer[i] = 0;
-      continue;
-    }
-    phase_ += 2.0f * kPi * freq / ToneConfig::SampleRateHz;
-    if (phase_ > 2.0f * kPi) phase_ -= 2.0f * kPi;
-    buffer[i] = static_cast<int16_t>(kAmplitude * sinf(phase_));
+  uint16_t freq = steps[index].freqHz;
+  if (freq == 0) {
+    noTone(Pins::Buzzer);
+  } else {
+    tone(Pins::Buzzer, freq);
   }
 }

@@ -85,7 +85,7 @@ void setup() {
   }
 
   reportStatus("Battery (MAX17048)", battery.begin());
-  reportStatus("Alarm tone (I2S)", alarmSound.begin());
+  reportStatus("Alarm tone (buzzer)", alarmSound.begin());
 
   alarmClock.begin();
   radioTuner.begin();
