@@ -26,6 +26,13 @@
 - **Power**: inline SPDT slide switch on the battery line for a hard on/off.
 - **Menu**: more advanced settings/controls are handled via an on-screen menu on the Feather's built-in TFT, navigated using the Feather's onboard buttons.
 
+## Planned Features
+
+- **Web dashboard**: the ESP32-S3's WiFi hosts a web dashboard mirroring the menu items, for faster/easier setup from a phone.
+  - First connection: phone joins the ESP32's own WiFi access point (AP mode).
+  - From the dashboard, the user can then configure the ESP32 to join the home WiFi network.
+  - Once on the home network, the device is reachable at a `.local` (mDNS) address instead of the AP.
+
 ## Enclosure
 
 A 3D-printed case will be designed to house all components in the final form factor. CAD/STL files will live under [`enclosure/`](enclosure/).
