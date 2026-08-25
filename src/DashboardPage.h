@@ -44,6 +44,14 @@ static const char kDashboardHtml[] = R"rawliteral(
 </section>
 
 <section>
+  <h2>Time zone</h2>
+  <label>Time zone
+    <select id="tzSelect" onchange="setTimezone()"></select>
+  </label>
+  <div class="status">Takes effect on the next NTP sync (immediately, if online).</div>
+</section>
+
+<section>
   <h2>Radio</h2>
   <div class="row">
     <span id="radioFreq" style="font-size:1.4rem">--.- MHz</span>
@@ -112,6 +120,16 @@ async function refresh() {
   } catch (e) { /* device may be mid-reboot after WiFi save */ }
 
   try {
+    const tz = await api('/api/timezone');
+    const tzSelect = document.getElementById('tzSelect');
+    if (tzSelect.dataset.loaded !== String(tz.options.length)) {
+      tzSelect.innerHTML = tz.options.map((label, i) => `<option value="${i}">${label}</option>`).join('');
+      tzSelect.dataset.loaded = String(tz.options.length);
+    }
+    tzSelect.value = tz.index;
+  } catch (e) {}
+
+  try {
     const radio = await api('/api/radio');
     document.getElementById('radioFreq').textContent = (radio.frequency10kHz / 100).toFixed(1) + ' MHz';
     document.getElementById('volumeValue').textContent = radio.volume;
@@ -153,6 +171,13 @@ async function saveWifi() {
   await api('/api/wifi', { method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ssid: document.getElementById('wifiSsid').value, password: document.getElementById('wifiPassword').value }) });
   document.getElementById('statusLine').textContent = 'Saved. Rebooting to join network...';
+}
+
+async function setTimezone() {
+  const index = parseInt(document.getElementById('tzSelect').value, 10);
+  await api('/api/timezone', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ index }) });
+  refresh();
 }
 
 function tuneRadio() {

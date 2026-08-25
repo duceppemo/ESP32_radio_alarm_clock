@@ -38,7 +38,7 @@ Off-the-shelf radio alarm clocks are either dumb (no scheduling beyond one or tw
 - **Web dashboard** — configure alarms, radio presets, volume, and WiFi from a phone; no app, no account, no cloud.
 - **OTA firmware updates** — reflash over WiFi from the dashboard once it's built and sealed up.
 - **Real battery monitoring** — an onboard fuel-gauge chip (MAX17048), not a voltage-divider guess.
-- **NTP time sync** — corrects the RTC automatically once on WiFi, so it doesn't slowly drift.
+- **NTP time sync with a selectable timezone** — corrects the RTC automatically once on WiFi, so it doesn't slowly drift; pick your timezone (DST rule included) from the on-device menu or the dashboard, nothing hardcoded.
 - **On-device menu** — full control from the built-in color TFT and three buttons, no phone required.
 - **One button, two jobs** — the snooze button snoozes a ringing alarm; press it while just listening to the radio and it instead starts (or cancels) a sleep timer, shown with a live countdown on the TFT.
 
@@ -94,7 +94,7 @@ It builds clean and its hardware-independent logic (alarm scheduling, radio wrap
 - **Snooze**: dedicated panel-mount tactile button, front-mounted for easy reach, wired separately from the Feather's onboard top-mounted menu buttons. Dual behavior: while an alarm is ringing/snoozed, it snoozes it; otherwise, if the radio is on, it toggles a sleep timer instead (default 30 min), shown with a live countdown on the TFT's Home screen.
 - **Volume**: two low-profile panel-mount tactile buttons (Vol+/Vol−) — flush with the enclosure, no protruding knob.
 - **Power**: inline SPDT slide switch on the battery line for a hard on/off.
-- **Menu**: more advanced settings/controls are handled via an on-screen menu on the Feather's built-in TFT, navigated using the Feather's onboard buttons — including alarm scheduling, radio tuning, and manually setting the time (handy before WiFi/NTP is set up, or if it's ever unreachable).
+- **Menu**: more advanced settings/controls are handled via an on-screen menu on the Feather's built-in TFT, navigated using the Feather's onboard buttons — including alarm scheduling, radio tuning, manually setting the time (handy before WiFi/NTP is set up, or if it's ever unreachable), and picking a timezone from a curated list.
 
 ## Roadmap
 
