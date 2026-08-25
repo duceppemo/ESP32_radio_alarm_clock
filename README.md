@@ -16,9 +16,12 @@
 | 1 | SI4730-D60-GMR AM/FM Receiver Module (PL102BA-S V2.1, DSP Digital Tuner) | SI4730-D60-GMR | — | AM/FM radio tuner |
 | 1 | Panel-mount tactile button | TBD | TBD | Dedicated front-panel snooze button, separate from the Feather's onboard buttons |
 | 1 | Panel-mount rotary encoder | TBD | TBD | Physical volume control |
+| 1 | Lithium battery | TBD | TBD | Power source |
+| 1 | Inline SPDT slide switch | TBD | TBD | Hard on/off, wired inline on the battery line |
 
 ## Controls
 
 - **Snooze**: dedicated panel-mount tactile button, front-mounted for easy reach, wired separately from the Feather's onboard top-mounted menu buttons.
 - **Volume**: small panel-mount rotary encoder for physical volume control.
+- **Power**: inline SPDT slide switch on the battery line for a hard on/off.
 
