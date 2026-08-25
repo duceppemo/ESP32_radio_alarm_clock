@@ -15,6 +15,18 @@ pio run -t upload -t monitor         # flash, then open the serial monitor
 
 Run these from PowerShell, not Git Bash. Git Bash's MSYS-style environment fails to resolve the `xtensa-esp32s3-elf-g++` toolchain PlatformIO installs, even though the same commands work immediately in PowerShell.
 
+## Testing
+
+`AlarmClock`'s scheduling logic (day-of-week masking, ringing/snoozed state transitions, snooze timing, the dedup-within-a-minute guard) has real unit tests that run on the host machine — no ESP32 hardware needed:
+
+```powershell
+pio test -e native
+```
+
+This needs a native C/C++ toolchain (MinGW-w64, via `winget install BrechtSanders.WinLibs.POSIX.UCRT`, or any gcc/clang). `default_envs` in `platformio.ini` keeps a plain `pio run` scoped to the real firmware — `native` only builds when named explicitly, since it has no `main()` outside a test run.
+
+The `[env:native]` build compiles only `AlarmClock.cpp` from `src/` (`build_src_filter`) — everything else touches real hardware libraries (radio, display, WiFi, I2S) that don't build natively. `test/native_fakes/` provides minimal stand-ins for the two things `AlarmClock` depends on that aren't portable: `RTClib.h` (a self-contained reimplementation of just `DateTime`/`TimeSpan`'s calendar math — pulling in the *real* RTClib natively means dragging Adafruit BusIO through an Arduino-API mock, which had real gaps like a missing `BitOrder` type) and `Preferences.h` (an in-memory fake of the ESP32 NVS wrapper; call `Preferences::resetAll()` between test cases to avoid leaking state through its static store). Other modules aren't covered yet — `RadioTuner`, `MenuSystem`, `WebDashboard`, etc. would need their hardware dependencies (SI4735, ESPAsyncWebServer, Adafruit_GFX) faked the same way to be testable this way, which hasn't been done.
+
 ## Modules
 
 | File | Responsibility |
@@ -62,6 +74,6 @@ Each alarm picks a `WakeSource`: **Radio** ramps `RadioTuner`'s volume from `Ala
 ## Known gaps
 
 - Physical snooze button, rotary encoder volume control, and VEML7700-driven display auto-dimming have pins reserved in `Config.h` but no polling/handling code yet.
-- The `Config.h` pin assignments (including the buzzer) and the SI4735 reset-pin timing are unverified against real wiring. The piezo buzzer isn't yet in the hardware BOM.
+- The `Config.h` pin assignments (including the buzzer) and the SI4735 reset-pin timing are unverified against real wiring.
 - The dead-air RSSI threshold (`AlarmConfig::DeadAirRssiThreshold`) is a guess and will need retuning once there's a real signal to measure.
 - The buzzer tone frequencies/pattern (`AlarmSound.cpp`) are a best guess at what sounds good on a typical passive piezo — worth listening to and retuning once hardware exists.
