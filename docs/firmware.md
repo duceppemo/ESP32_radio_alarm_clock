@@ -19,10 +19,10 @@ Run these from PowerShell, not Git Bash. Git Bash's MSYS-style environment fails
 
 | File | Responsibility |
 |---|---|
-| [`src/Config.h`](../src/Config.h) | Pin assignments and shared tunables. All non-bus pins (radio reset, snooze button, encoder, I2S amp) are placeholders pending final wiring — see [`wiring-diagram.html`](wiring-diagram.html). |
+| [`src/Config.h`](../src/Config.h) | Pin assignments and shared tunables. All non-bus pins (radio reset, snooze button, encoder, buzzer) are placeholders pending final wiring — see [`wiring-diagram.html`](wiring-diagram.html). |
 | [`src/AlarmClock.*`](../src/AlarmClock.h) | Up to 3 schedules and an idle/ringing/snoozed state machine, each with a `WakeSource` (radio / beep / chime). Persisted to NVS via `Preferences`. Only needs a `DateTime` per tick, so it's hardware-independent. |
-| [`src/RadioTuner.*`](../src/RadioTuner.h) | Wraps the [PU2CLR SI4735](https://github.com/pu2clr/SI4735) driver for the onboard SI4730 FM tuner: tune/seek/volume/mute, 6 presets, a sleep timer, all persisted to NVS (except the sunrise-ramp's intermediate volume steps, which use a transient setter that skips the flash write). |
-| [`src/AlarmSound.*`](../src/AlarmSound.h) | Synthesizes two tone patterns (classic beep, two-note chime) on the fly and streams them to the STEMMA I2S amp, in small chunks so it doesn't block `loop()`. Used both as a selectable wake sound and as the dead-air fallback below. |
+| [`src/RadioTuner.*`](../src/RadioTuner.h) | Wraps the [PU2CLR SI4735](https://github.com/pu2clr/SI4735) driver for the onboard SI4730 FM tuner: tune/seek/volume/mute, 6 presets, a sleep timer, all persisted to NVS (except the sunrise-ramp's intermediate volume steps, which use a transient setter that skips the flash write). This is control only, over I2C — see the audio-path note below. |
+| [`src/AlarmSound.*`](../src/AlarmSound.h) | Drives a piezo buzzer on `Pins::Buzzer` via Arduino's `tone()`/`noTone()`, stepping through a small pattern table: an urgent 1.8/2.2kHz alternating beep, or a gentler ascending A-major-triad chime (A5→C♯6→E6). Used both as a selectable wake sound and as the dead-air fallback below. Entirely unrelated to the radio's audio path. |
 | [`src/BatteryMonitor.*`](../src/BatteryMonitor.h) | Wraps the onboard MAX17048 LiPoly fuel gauge (I2C, address 0x36) for voltage/percent/low-battery. |
 | [`src/WakeController.*`](../src/WakeController.h) | Pure orchestration, owns nothing: watches `AlarmClock`'s state and, per the ringing alarm's `WakeSource`, either ramps `RadioTuner`'s volume up over `AlarmConfig::WakeRampSeconds` (falling back to `AlarmSound` if the station turns out to be dead air) or plays the selected tone directly. |
 | [`src/MenuSystem.*`](../src/MenuSystem.h) | Debounced short/long-press handling for the three onboard buttons (D0/D1/D2) drives a Home / Alarms / Alarm-edit / Radio / WiFi-info screen state machine on the built-in TFT. Short press selects/confirms, long press backs out a level; on Home while an alarm is ringing, the same two gestures snooze/dismiss it. Shows battery percent on Home and the sleep timer on the Radio screen when available. |
@@ -46,14 +46,22 @@ On boot, `WebDashboard` loads WiFi credentials from NVS. If none are stored (or 
 
 Built on `esp32async/ESPAsyncWebServer` + `esp32async/AsyncTCP` (the actively maintained fork — not the archived `me-no-dev` originals), `bblanchon/ArduinoJson` v7, and `ayushsharma82/ElegantOTA`.
 
+## Two independent audio paths
+
+Easy to mix up, so worth stating plainly:
+
+- **FM/AM playback**: `SI4730 (analog audio out) → amp → speaker`. Pure analog, wired straight to each other. The ESP32 is never in this signal path — it only talks to the SI4730 over I2C to send control commands (tune, volume, seek), the same bus as the RTC and light sensor.
+- **Alarm tones**: `ESP32 → piezo buzzer` on `Pins::Buzzer`, via `AlarmSound`. Unrelated to the amp/speaker chain entirely.
+
+So there are two independent sound sources on this device, not one shared path: the buzzer for a simple alarm tone, the amp+speaker for actual radio audio.
+
 ## Wake sources and the dead-air fallback
 
-Each alarm picks a `WakeSource`: **Radio** ramps `RadioTuner`'s volume from `AlarmConfig::WakeRampStartVolume` up to whatever was last set, over `WakeRampSeconds` (90s by default); a few seconds in, `WakeController` checks `RadioTuner::rssi()` against `AlarmConfig::DeadAirRssiThreshold` and, if the tuned station is silent, mutes the radio and switches to the classic-beep tone instead. **Beep** and **Chime** skip the radio entirely and play that tone from the start. All tones go through `AlarmSound` over I2S.
-
-Note: the STEMMA amp only accepts digital I2S input, so this only ever plays ESP32-generated tones. How the SI4730's own analog audio output reaches the speaker for the Radio wake source is a separate, still-open hardware question (flagged in `wiring-diagram.html`) — the RSSI-based dead-air check doesn't resolve that, it only decides whether to fall back to a tone.
+Each alarm picks a `WakeSource`: **Radio** ramps `RadioTuner`'s volume from `AlarmConfig::WakeRampStartVolume` up to whatever was last set, over `WakeRampSeconds` (90s by default) — this is still just an I2C volume command to the SI4730, controlling its actual analog output level. A few seconds in, `WakeController` checks `RadioTuner::rssi()` against `AlarmConfig::DeadAirRssiThreshold` and, if the tuned station is silent, mutes the radio (also over I2C, which cuts its analog output) and switches to the buzzer's beep tone instead. **Beep** and **Chime** skip the radio entirely and play that tone from the start.
 
 ## Known gaps
 
 - Physical snooze button, rotary encoder volume control, and VEML7700-driven display auto-dimming have pins reserved in `Config.h` but no polling/handling code yet.
-- The `Config.h` pin assignments, the SI4735 reset-pin timing, and the I2S amp wiring are all unverified against real wiring.
+- The `Config.h` pin assignments (including the buzzer) and the SI4735 reset-pin timing are unverified against real wiring. The piezo buzzer isn't yet in the hardware BOM.
 - The dead-air RSSI threshold (`AlarmConfig::DeadAirRssiThreshold`) is a guess and will need retuning once there's a real signal to measure.
+- The buzzer tone frequencies/pattern (`AlarmSound.cpp`) are a best guess at what sounds good on a typical passive piezo — worth listening to and retuning once hardware exists.

@@ -220,7 +220,7 @@
 
   <figure>
     <div class="scroll">
-      <svg viewBox="0 0 1400 780" role="img" aria-label="Wiring diagram of the ESP32-S3 Reverse TFT Feather at the center, with the DS3231 RTC, VEML7700 light sensor, 7-segment display, and SI4730 radio module daisy-chained on one I2C STEMMA QT bus above it; an FM wire antenna feeding the radio module; a CR1220 coin cell seated in the RTC's own holder; the STEMMA audio amp and speaker connected via an audio line to its right; a lithium battery through an inline SPDT switch on the positive lead only into its left side; and a panel snooze button and rotary encoder wired directly to spare GPIO pins below it." xmlns="http://www.w3.org/2000/svg">
+      <svg viewBox="0 0 1400 780" role="img" aria-label="Wiring diagram of the ESP32-S3 Reverse TFT Feather at the center, with the DS3231 RTC, VEML7700 light sensor, 7-segment display, and SI4730 radio module daisy-chained on one I2C STEMMA QT bus above it; an FM wire antenna feeding the radio module; a CR1220 coin cell seated in the RTC's own holder; an analog audio line running directly from the radio module down to the STEMMA amp and on to the speaker, bypassing the Feather entirely; a lithium battery through an inline SPDT switch on the positive lead only into its left side; and a panel snooze button, rotary encoder, and piezo buzzer wired directly to spare GPIO pins below it." xmlns="http://www.w3.org/2000/svg">
 
         <!-- drawing frame -->
         <rect x="20" y="20" width="1360" height="740" fill="none" stroke="var(--line)" stroke-width="1"/>
@@ -261,22 +261,24 @@
         <path d="M210,432 210,478 490,478 490,434" fill="none" stroke="var(--ground)" stroke-width="2.5" stroke-dasharray="1 6" stroke-linecap="round"/>
         <text x="300" y="472" font-family="IBM Plex Mono, monospace" font-size="12" fill="var(--ground)">GND (bypasses switch)</text>
 
-        <!-- audio: Feather -> Amp -> Speaker -->
+        <!-- audio: Radio module -> Amp -> Speaker (pure analog, never touches the Feather) -->
         <g fill="none" stroke="var(--accent-audio)" stroke-width="2.5">
-          <path d="M750,388 840,388"/>
+          <path d="M1200,190 1200,320 925,320 925,365"/>
           <path d="M1010,385 1090,385"/>
           <path d="M1010,410 1090,410"/>
         </g>
-        <text x="757" y="376" font-family="IBM Plex Mono, monospace" font-size="12" fill="var(--accent-audio)">AUDIO OUT</text>
+        <text x="1000" y="308" text-anchor="end" font-family="IBM Plex Mono, monospace" font-size="12" fill="var(--accent-audio)">AUDIO OUT (analog, radio module)</text>
         <text x="1020" y="428" font-family="IBM Plex Mono, monospace" font-size="11" fill="var(--accent-audio)">SPK + / &ndash; (soldered)</text>
 
-        <!-- GPIO: Feather -> snooze button, Feather -> rotary encoder -->
+        <!-- GPIO: Feather -> snooze button, Feather -> rotary encoder, Feather -> piezo buzzer -->
         <g fill="none" stroke="var(--accent-gpio)" stroke-width="2.5">
           <path d="M560,510 560,590 515,590 515,630"/>
           <path d="M700,510 700,590 755,590 755,630"/>
+          <path d="M750,420 970,420 970,630"/>
         </g>
         <text x="410" y="605" font-family="IBM Plex Mono, monospace" font-size="12" fill="var(--accent-gpio)">GPIO IN + GND</text>
         <text x="765" y="605" font-family="IBM Plex Mono, monospace" font-size="12" fill="var(--accent-gpio)">GPIO &times;3 (A / B / SW)</text>
+        <text x="980" y="418" font-family="IBM Plex Mono, monospace" font-size="12" fill="var(--accent-gpio)">GPIO OUT + GND</text>
 
         <!-- connection dots -->
         <g fill="var(--accent-bus)">
@@ -293,13 +295,14 @@
           <circle cx="210" cy="432" r="3.5"/><circle cx="490" cy="434" r="3.5"/>
         </g>
         <g fill="var(--accent-audio)">
-          <circle cx="750" cy="388" r="3.5"/><circle cx="840" cy="388" r="3.5"/>
+          <circle cx="1200" cy="190" r="3.5"/><circle cx="925" cy="365" r="3.5"/>
           <circle cx="1010" cy="385" r="3.5"/><circle cx="1090" cy="385" r="3.5"/>
           <circle cx="1010" cy="410" r="3.5"/><circle cx="1090" cy="410" r="3.5"/>
         </g>
         <g fill="var(--accent-gpio)">
           <circle cx="560" cy="510" r="3.5"/><circle cx="515" cy="630" r="3.5"/>
           <circle cx="700" cy="510" r="3.5"/><circle cx="755" cy="630" r="3.5"/>
+          <circle cx="750" cy="420" r="3.5"/><circle cx="970" cy="630" r="3.5"/>
         </g>
 
         <!-- ============ COMPONENTS ============ -->
@@ -368,12 +371,16 @@
           <rect x="660" y="630" width="190" height="90" fill="var(--surface)" stroke="var(--ink)" stroke-width="1.5"/>
           <text x="755" y="666" text-anchor="middle" font-size="15" font-weight="600" fill="var(--ink)">Rotary Encoder</text>
           <text x="755" y="690" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12" fill="var(--ink-dim)">panel-mount, volume</text>
+
+          <rect x="890" y="630" width="160" height="90" fill="var(--surface)" stroke="var(--ink)" stroke-width="1.5"/>
+          <text x="970" y="666" text-anchor="middle" font-size="15" font-weight="600" fill="var(--ink)">Piezo Buzzer</text>
+          <text x="970" y="690" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" fill="var(--ink-dim)">alarm tone, GPIO tone()</text>
         </g>
       </svg>
     </div>
 
     <figcaption>
-      <strong>Four separate wiring paths, one hub.</strong> The RTC, light sensor, 7-segment display, and radio module all share a single daisy-chained I2C bus off the Feather's STEMMA QT port &mdash; not individual home-run wires. The battery's positive lead alone routes through the slide switch; ground returns straight to the Feather. Audio and the two panel controls are separate point-to-point runs, not part of the I2C bus. The RTC's coin cell and the radio's antenna are the two connections that don't run back to the Feather at all.
+      <strong>Two independent audio paths, plus the shared control hub.</strong> The RTC, light sensor, 7-segment display, and radio module all share a single daisy-chained I2C bus off the Feather's STEMMA QT port &mdash; not individual home-run wires &mdash; and that's the <em>only</em> connection between the Feather and the radio module: pure control (tune/volume commands), no audio. FM/AM playback is a separate, purely analog run straight from the radio module's audio-out into the amp and on to the speaker; it never touches the Feather. Alarm tones are a third, unrelated path: a piezo buzzer wired straight to a GPIO pin, driven by the firmware's own tone generator. The battery's positive lead alone routes through the slide switch; ground returns straight to the Feather. The RTC's coin cell and the radio's antenna are the two connections that don't run back to the Feather at all.
     </figcaption>
   </figure>
 
@@ -388,11 +395,11 @@
   <section class="notes">
     <h2>Notes &amp; assumptions</h2>
     <ul>
-      <li>The radio module is drawn on the shared I2C bus via the <code>JST SH 4-pin &#8594; header</code> cable. Confirm the <b>SI4730-D60-GMR / PL102BA-S</b> module's actual control interface against its datasheet before wiring &mdash; some breakout boards expose I2C, others SPI.</li>
-      <li>The Feather-to-amp audio run is drawn as a single generic line. Confirm whether your firmware drives the amp over I2S or the Feather's analog line-out, and use the matching pins.</li>
+      <li>The radio module is drawn on the shared I2C bus via the <code>JST SH 4-pin &#8594; header</code> cable. Confirm the <b>SI4730-D60-GMR / PL102BA-S</b> module's actual control interface against its datasheet before wiring &mdash; some breakout boards expose I2C, others SPI. That I2C link is control-only (tune/volume/seek registers); it carries no audio.</li>
+      <li>The radio-to-amp audio run is drawn as a single generic line. The SI4730 module's audio-out pins are analog line-level and feed the amp's analog input directly &mdash; confirm the module's actual audio-out pin labels against its datasheet.</li>
       <li>Speaker leads are soldered directly to the amp's output; the BOM has no connector for that hop.</li>
       <li>The two <code>JST PH 3-pin</code> cables and one of the three <code>JST SH 4-pin</code> cables aren't yet assigned to a specific hop above &mdash; likely candidates are the amp's audio input and power breakout. Update this diagram once wired up.</li>
-      <li>Panel button and encoder wiring assumes spare GPIO with internal pull-ups; confirm against the Feather's pinout before final assembly.</li>
+      <li>Panel button, encoder, and piezo buzzer wiring assumes spare GPIO with internal pull-ups; confirm against the Feather's pinout before final assembly. The buzzer isn't yet in the hardware BOM &mdash; a small 5V/3V passive piezo driven by the ESP32's <code>tone()</code> is the assumption.</li>
       <li>The <b>CR1220 coin cell</b> seats directly in the DS3231 breakout's onboard holder &mdash; it backs up the RTC when main power is off and needs no separate wiring.</li>
       <li>The <b>FM wire antenna</b> connects straight to the SI4730 module's antenna pad; length and routing affect reception, so keep it away from the speaker and switching power lines in the enclosure layout.</li>
     </ul>

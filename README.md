@@ -12,16 +12,17 @@
 | 3 | JST SH 4-Pin Cable - Qwiic Compatible | 4210 | 1528-4210-ND | STEMMA QT interconnects |
 | 1 | JST SH 4-Pin to Premium Male Header Cable | 4209 | 1528-4209-ND | STEMMA QT to header breakout |
 | 2 | JST PH 3-Pin to Male Header Cable | 3893 | 1528-2696-ND | Power/signal breakout |
-| 1 | Speaker 4 Ohm, Top Port | 3351 | 3351-ND | Alarm/radio audio output |
+| 1 | Speaker 4 Ohm, Top Port | 3351 | 3351-ND | FM/AM radio audio output |
 | 1 | SI4730-D60-GMR AM/FM Receiver Module (PL102BA-S V2.1, DSP Digital Tuner) | SI4730-D60-GMR | — | AM/FM radio tuner |
 | 1 | Panel-mount tactile button | TBD | TBD | Dedicated front-panel snooze button, separate from the Feather's onboard buttons |
 | 1 | Panel-mount rotary encoder | TBD | TBD | Physical volume control |
+| 1 | Small piezo buzzer (passive, GPIO-driven) | TBD | TBD | Alarm tone, independent of the radio/speaker signal path |
 | 1 | Lithium battery | TBD | TBD | Power source |
 | 1 | Inline SPDT slide switch | TBD | TBD | Hard on/off, wired inline on the battery line |
 | 1 | CR1220 coin cell | TBD | TBD | RTC backup power, seats in the DS3231 breakout's onboard holder |
 | 1 | FM wire antenna | TBD | TBD | Antenna for the SI4730 AM/FM receiver module |
 
-![Wiring diagram: RTC, light sensor, 7-segment display, and FM radio module daisy-chained on one I2C bus off the ESP32-S3 Feather; battery through a slide switch; audio amp and speaker; snooze button and rotary encoder on direct GPIO](docs/wiring-diagram.png)
+![Wiring diagram: RTC, light sensor, 7-segment display, and FM radio module daisy-chained on one I2C bus off the ESP32-S3 Feather; battery through a slide switch; audio running straight from the radio module to the amp and speaker; snooze button, rotary encoder, and piezo buzzer on direct GPIO](docs/wiring-diagram.png)
 
 Rendered from [`docs/wiring-diagram.html`](docs/wiring-diagram.html), which has the full interactive version plus wiring notes/assumptions.
 
