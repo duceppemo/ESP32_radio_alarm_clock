@@ -24,6 +24,7 @@ class AlarmSound {
   void start(Tone tone);
   void stop();
   bool active() const { return active_; }
+  Tone currentTone() const { return tone_; }
 
   // Call every loop() iteration while active(); advances the tone pattern.
   void update();
