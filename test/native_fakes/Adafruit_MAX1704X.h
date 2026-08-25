@@ -1,9 +1,11 @@
 #pragma once
 
 // Minimal native stand-in for the Adafruit MAX1704X driver -- BatteryMonitor
-// is a value member of it, so MenuSystem.h (which holds a BatteryMonitor*)
-// needs a full type even though nothing under test calls into it.
-// BatteryMonitor.cpp itself isn't compiled for the native env.
+// holds one by value, so MenuSystem.h (which holds a BatteryMonitor*) needs
+// a full type even when tests pass a null BatteryMonitor*. BatteryMonitor.cpp
+// itself IS compiled for the native env too (platformio.ini's
+// build_src_filter) -- MenuSystem.cpp calls through the pointer, so the
+// linker needs those symbols even though no test triggers them at runtime.
 class Adafruit_MAX17048 {
  public:
   bool begin() { return false; }

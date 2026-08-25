@@ -19,6 +19,17 @@
 #include <cstdint>
 
 namespace native_fakes_detail {
+// Floor division/modulo -- C++'s builtin / and % truncate toward zero, which
+// is wrong for negative unixtimes (pre-1970 dates): e.g. -1 / 3600 == 0 with
+// truncation, but should floor to -1. No test currently constructs a
+// pre-1970 DateTime, but this keeps the class correct if one ever does.
+inline int64_t floorDiv(int64_t a, int64_t b) {
+  int64_t q = a / b;
+  if ((a % b != 0) && ((a < 0) != (b < 0))) q--;
+  return q;
+}
+inline int64_t floorMod(int64_t a, int64_t b) { return a - floorDiv(a, b) * b; }
+
 inline int64_t days_from_civil(int32_t y, uint32_t m, uint32_t d) {
   y -= m <= 2;
   const int32_t era = (y >= 0 ? y : y - 399) / 400;
@@ -50,13 +61,17 @@ class DateTime {
     unixtime_ = days * 86400 + hour * 3600 + minute * 60 + second;
   }
 
-  uint8_t hour() const { return static_cast<uint8_t>((unixtime_ / 3600) % 24); }
-  uint8_t minute() const { return static_cast<uint8_t>((unixtime_ / 60) % 60); }
-  uint8_t second() const { return static_cast<uint8_t>(unixtime_ % 60); }
+  uint8_t hour() const {
+    return static_cast<uint8_t>(native_fakes_detail::floorMod(native_fakes_detail::floorDiv(unixtime_, 3600), 24));
+  }
+  uint8_t minute() const {
+    return static_cast<uint8_t>(native_fakes_detail::floorMod(native_fakes_detail::floorDiv(unixtime_, 60), 60));
+  }
+  uint8_t second() const { return static_cast<uint8_t>(native_fakes_detail::floorMod(unixtime_, 60)); }
   // 0 = Sunday .. 6 = Saturday, matching RTClib's convention.
   uint8_t dayOfTheWeek() const {
-    int64_t days = unixtime_ / 86400;
-    return static_cast<uint8_t>((days + 4) % 7);
+    int64_t days = native_fakes_detail::floorDiv(unixtime_, 86400);
+    return static_cast<uint8_t>(native_fakes_detail::floorMod(days + 4, 7));
   }
   int64_t unixtime() const { return unixtime_; }
 
