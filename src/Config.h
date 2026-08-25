@@ -7,6 +7,12 @@
 // yet (see docs/wiring-diagram.html) -- these are placeholders on currently
 // free broken-out pins of the ESP32-S3 Reverse TFT Feather and MUST be
 // confirmed once the panel controls and radio module are actually wired.
+//
+// The I2S pins drive the STEMMA audio amp for ESP32-generated tones only
+// (see AlarmSound). The amp is digital-input-only (MAX98357A-style), so it
+// cannot take the SI4730's analog audio output directly -- how FM radio
+// audio actually reaches the speaker is still an open hardware question
+// (see docs/wiring-diagram.html notes).
 // ---------------------------------------------------------------------------
 namespace Pins {
 constexpr uint8_t RadioReset = A0;
@@ -27,6 +33,17 @@ constexpr uint8_t MenuDown = 2;    // D2
 namespace AlarmConfig {
 constexpr uint8_t MaxAlarms = 3;
 constexpr uint8_t DefaultSnoozeMinutes = 9;
+
+// Gradual/"sunrise" wake: volume ramps from WakeRampStartVolume up to
+// whatever volume was last set, over WakeRampSeconds.
+constexpr uint16_t WakeRampSeconds = 90;
+constexpr uint8_t WakeRampStartVolume = 4;
+
+// If waking via radio, how long to let it ramp before checking for a
+// station; below this RSSI it's treated as dead air and AlarmSound takes
+// over instead. RSSI scale/threshold are unverified without real hardware.
+constexpr uint16_t DeadAirCheckDelaySeconds = 5;
+constexpr uint8_t DeadAirRssiThreshold = 10;
 }  // namespace AlarmConfig
 
 namespace RadioConfig {
@@ -36,10 +53,26 @@ constexpr uint16_t FmStep = 10;          // 100 kHz steps
 constexpr uint16_t FmDefaultFreq = 9750; // 97.50 MHz
 constexpr uint8_t DefaultVolume = 30;    // SI4735 volume range is 0-63
 constexpr uint8_t MaxPresets = 6;
+constexpr uint16_t MaxSleepTimerMinutes = 120;
 }  // namespace RadioConfig
+
+namespace ToneConfig {
+constexpr uint32_t SampleRateHz = 16000;
+constexpr uint16_t ChunkSamples = 320;  // 20 ms per I2S write, keeps loop() responsive
+}  // namespace ToneConfig
 
 namespace NetConfig {
 constexpr const char *ApSsid = "AlarmClock-Setup";
 constexpr const char *MdnsHostname = "alarmclock";
 constexpr uint32_t StaConnectTimeoutMs = 15000;
+
+// NTP keeps the DS3231 accurate; POSIX TZ string, adjust to your locale
+// (reference: https://github.com/nayarsystems/posix_tz_db).
+constexpr const char *NtpServer = "pool.ntp.org";
+constexpr const char *PosixTimezone = "UTC0";
+constexpr uint32_t NtpResyncIntervalMs = 24UL * 60 * 60 * 1000;
 }  // namespace NetConfig
+
+namespace BatteryConfig {
+constexpr uint8_t LowPercentThreshold = 15;
+}  // namespace BatteryConfig
