@@ -1,4 +1,51 @@
-# ESP32_radio_alarm_clock
+# ESP32 Radio Alarm Clock
+
+*A WiFi-connected FM/AM alarm clock, built around an ESP32-S3: real radio wake-up with a gradual sunrise ramp, a web dashboard for setup from your phone, OTA updates, and a built-in color menu — no app required.*
+
+[![CI](https://github.com/duceppemo/ESP32_radio_alarm_clock/actions/workflows/ci.yml/badge.svg)](https://github.com/duceppemo/ESP32_radio_alarm_clock/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Platform](https://img.shields.io/badge/platform-ESP32--S3-3f4750)](https://www.adafruit.com/product/5691)
+[![Build system](https://img.shields.io/badge/build-PlatformIO-orange)](https://platformio.org/)
+[![Status](https://img.shields.io/badge/status-firmware%20ready%2C%20hardware%20pending-yellow)](docs/firmware.md)
+
+<p align="center">
+  <img src="docs/images/hero.jpg" alt="ESP32 radio alarm clock glowing softly on a nightstand beside a bed, morning light coming through the window" width="760">
+</p>
+
+<!--
+  Hero image slot: docs/images/hero.jpg (not committed yet -- drop a photo
+  in once one exists; nothing else needs to change). Landscape, ~1600px
+  wide works well; the device should read as the clear subject of the frame.
+-->
+
+## Contents
+
+- [Why this project](#why-this-project)
+- [Features](#features)
+- [Hardware](#hardware)
+- [Wiring](#wiring)
+- [Firmware](#firmware)
+- [Getting started](#getting-started)
+- [Controls](#controls)
+- [Roadmap](#roadmap)
+- [Enclosure](#enclosure)
+- [License](#license)
+
+## Why this project
+
+Off-the-shelf radio alarm clocks are either dumb (no scheduling beyond one or two alarms, no way to fix a bad RTC) or bring a cloud subscription along for the ride. This one's neither: it's a real FM/AM tuner wired straight to a speaker for genuinely good audio, a color touch-free menu for when you don't want your phone out, and a small local web dashboard for everything else — presets, per-alarm wake sounds, sleep timer, firmware updates — all running on one ESP32-S3 board.
+
+## Features
+
+- **Real radio wake-up** — an actual FM/AM tuner (SI4730), not a streamed stub, with a gradual sunrise volume ramp instead of a jump-scare.
+- **Dead-air fallback** — if the tuned station has no signal when the alarm fires, it automatically switches to a gentle tone instead of static.
+- **Per-alarm wake source** — radio, a classic beep, or a two-note chime; three independent schedules, each with its own days-of-week mask.
+- **Web dashboard** — configure alarms, radio presets, volume, and WiFi from a phone; no app, no account, no cloud.
+- **OTA firmware updates** — reflash over WiFi from the dashboard once it's built and sealed up.
+- **Real battery monitoring** — an onboard fuel-gauge chip (MAX17048), not a voltage-divider guess.
+- **NTP time sync** — corrects the RTC automatically once on WiFi, so it doesn't slowly drift.
+- **On-device menu** — full control from the built-in color TFT and three buttons, no phone required.
+- **Snooze + sleep timer** — a dedicated front panel button, plus an auto-off timer for falling asleep to the radio.
 
 ## Hardware
 
@@ -22,13 +69,30 @@
 | 1 | CR1220 coin cell | TBD | TBD | RTC backup power, seats in the DS3231 breakout's onboard holder |
 | 1 | FM wire antenna | TBD | TBD | Antenna for the SI4730 AM/FM receiver module |
 
+## Wiring
+
 ![Wiring diagram: RTC, light sensor, 7-segment display, and FM radio module daisy-chained on one I2C bus off the ESP32-S3 Feather; battery through a slide switch; audio running straight from the radio module to the amp and speaker; snooze button, rotary encoder, and piezo buzzer on direct GPIO](docs/wiring-diagram.svg)
 
 See [`docs/wiring-diagram.html`](docs/wiring-diagram.html) for wiring notes/assumptions (open it locally or via [an HTML preview service](https://htmlpreview.github.io/?https://github.com/duceppemo/ESP32_radio_alarm_clock/blob/master/docs/wiring-diagram.html) — GitHub shows `.html` files as source, not rendered, when opened directly).
 
 ## Firmware
 
-PlatformIO project targeting the ESP32-S3 via the [pioarduino](https://github.com/pioarduino/platform-espressif32) platform fork. Covers alarm scheduling (with a sunrise volume ramp and a dead-air fallback tone), FM radio control, an on-device TFT menu, battery monitoring, NTP time sync, OTA firmware updates, and a WiFi setup/status web dashboard — see [`docs/firmware.md`](docs/firmware.md) for architecture, build instructions, and the dashboard's API. Not yet flashed to real hardware.
+A PlatformIO project targeting the ESP32-S3 via the [pioarduino](https://github.com/pioarduino/platform-espressif32) platform fork. Covers alarm scheduling (sunrise ramp + dead-air fallback), FM radio control, an on-device TFT menu, battery monitoring, NTP time sync, OTA updates, and the WiFi setup/status web dashboard.
+
+It builds clean and its hardware-independent logic (alarm scheduling, radio wrapper, wake orchestration, on-device menu) has 34 passing unit tests that run on every push — see the CI badge above — but it hasn't been flashed to real hardware yet, since none of the parts have arrived. See [`docs/firmware.md`](docs/firmware.md) for the module architecture, build/flash instructions, the dashboard's API, and current known gaps.
+
+## Getting started
+
+1. **Order the parts.** See [Hardware](#hardware) above — the Feather, radio module, and STEMMA sensors have real part numbers; a few panel-mount parts are still open choices (see the `TBD` rows).
+2. **Wire it up.** Follow [Wiring](#wiring) — it's one shared I2C bus for the sensors/display/radio, a switched battery line, and a couple of direct GPIO runs for the panel controls.
+3. **Flash the firmware.**
+
+   ```powershell
+   pio run -t upload
+   ```
+
+   See [`docs/firmware.md`](docs/firmware.md#build--flash) for the full build/flash/monitor commands.
+4. **First boot.** The device starts its own WiFi access point, `AlarmClock-Setup`. Join it from your phone, open the dashboard, and enter your home WiFi credentials — it reboots onto your network and is reachable afterward at `alarmclock.local`.
 
 ## Controls
 
@@ -37,7 +101,7 @@ PlatformIO project targeting the ESP32-S3 via the [pioarduino](https://github.co
 - **Power**: inline SPDT slide switch on the battery line for a hard on/off.
 - **Menu**: more advanced settings/controls are handled via an on-screen menu on the Feather's built-in TFT, navigated using the Feather's onboard buttons.
 
-## Planned Features
+## Roadmap
 
 - **Physical snooze/volume input**: the dedicated snooze button and rotary encoder have pins reserved but aren't polled by firmware yet.
 - **Auto-dimming**: use the VEML7700 ambient light reading to dim the 7-segment and TFT displays automatically.
@@ -46,3 +110,6 @@ PlatformIO project targeting the ESP32-S3 via the [pioarduino](https://github.co
 
 A 3D-printed case will be designed to house all components in the final form factor. CAD/STL files will live under [`enclosure/`](enclosure/).
 
+## License
+
+[MIT](LICENSE) © Marc-Olivier Duceppe
