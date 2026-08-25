@@ -17,7 +17,7 @@ Run these from PowerShell, not Git Bash. Git Bash's MSYS-style environment fails
 
 ## Testing
 
-`AlarmClock`'s scheduling logic (day-of-week masking, ringing/snoozed state transitions, snooze timing, the dedup-within-a-minute guard) has real unit tests that run on the host machine — no ESP32 hardware needed:
+Four modules' logic has real unit tests that run on the host machine — no ESP32 hardware needed:
 
 ```powershell
 pio test -e native
@@ -25,7 +25,22 @@ pio test -e native
 
 This needs a native C/C++ toolchain (MinGW-w64, via `winget install BrechtSanders.WinLibs.POSIX.UCRT`, or any gcc/clang). `default_envs` in `platformio.ini` keeps a plain `pio run` scoped to the real firmware — `native` only builds when named explicitly, since it has no `main()` outside a test run.
 
-The `[env:native]` build compiles only `AlarmClock.cpp` from `src/` (`build_src_filter`) — everything else touches real hardware libraries (radio, display, WiFi, I2S) that don't build natively. `test/native_fakes/` provides minimal stand-ins for the two things `AlarmClock` depends on that aren't portable: `RTClib.h` (a self-contained reimplementation of just `DateTime`/`TimeSpan`'s calendar math — pulling in the *real* RTClib natively means dragging Adafruit BusIO through an Arduino-API mock, which had real gaps like a missing `BitOrder` type) and `Preferences.h` (an in-memory fake of the ESP32 NVS wrapper; call `Preferences::resetAll()` between test cases to avoid leaking state through its static store). Other modules aren't covered yet — `RadioTuner`, `MenuSystem`, `WebDashboard`, etc. would need their hardware dependencies (SI4735, ESPAsyncWebServer, Adafruit_GFX) faked the same way to be testable this way, which hasn't been done.
+| Suite | Covers |
+|---|---|
+| `test/test_alarm_clock/` | Day-of-week mask matching, ringing/snoozed state transitions, snooze timing, the dedup-within-a-minute guard, persistence across instances. |
+| `test/test_radio_tuner/` | FM-band clamping, volume clamping, the transient-vs-persisted volume setter, preset store/recall, sleep timer expiry and its remaining-minutes math, persistence across instances. |
+| `test/test_wake_controller/` | The sunrise volume ramp's math, the dead-air RSSI fallback (and that it does *not* fire with a good signal), beep/chime wake sources muting the radio and starting the right tone immediately, what dismissing/snoozing does and doesn't restore. |
+| `test/test_menu_system/` | The button-driven screen/state machine, end to end: short/long press, field-by-field alarm editing (including discarding on cancel), Radio-screen tune/mute, the ringing-alarm snooze/dismiss shortcut on Home. Since `MenuSystem`'s screen/cursor state is private by design, these drive full interaction sequences via simulated button presses and assert on the resulting `AlarmClock`/`RadioTuner` state, the same way a real user's presses would. |
+
+The `[env:native]` build only compiles the `src/*.cpp` files listed in `build_src_filter` — `WebDashboard` isn't among them and isn't covered: it depends on `ESPAsyncWebServer`/`WiFi`/`ESPmDNS`, and its actual logic is mostly JSON marshaling coupled directly to request/response objects, so faking that stack well enough to test route handlers would be a much bigger, more fragile undertaking for comparatively little payoff versus the other modules here.
+
+`test/native_fakes/` provides minimal, self-contained stand-ins for exactly the hardware API surface each tested module touches — not general-purpose mocks. Pulling in the *real* `RTClib`/`Adafruit BusIO` natively through the `ArduinoFake` mocking library was tried first and abandoned: real Adafruit source code needs things that mock doesn't provide (a `BitOrder` type, a global `min()`), and patching around that would have been a losing game. What's faked instead:
+
+- `RTClib.h` — reimplements only `DateTime`/`TimeSpan`'s calendar math (Howard Hinnant's `days_from_civil` algorithm), verified against Python's `datetime`.
+- `Preferences.h` — an in-memory map standing in for the ESP32 NVS wrapper. Backed by one process-wide static store, so call `Preferences::resetAll()` in `setUp()` to avoid leaking state between test cases.
+- `SI4735.h` — records what `RadioTuner` sets and lets tests control what "the chip" reports back, notably `SI4735::setSimulatedRssi()` for dead-air testing.
+- `Adafruit_GFX.h` / `Adafruit_ST7789.h` / `Adafruit_MAX1704X.h` — no-op display/fuel-gauge stand-ins, just enough for `MenuSystem` to construct and render without a real screen.
+- `Arduino.h` — a fake `millis()` and per-pin `digitalRead()` that tests control directly (`native_fake_millis_value()`, `native_fake_digital_state(pin)`), plus the handful of other free functions/macros (`pinMode`, `tone`/`noTone`, `min`/`max`, `constrain`) the tested modules call.
 
 ## Modules
 
