@@ -21,7 +21,9 @@
 | 1 | CR1220 coin cell | TBD | TBD | RTC backup power, seats in the DS3231 breakout's onboard holder |
 | 1 | FM wire antenna | TBD | TBD | Antenna for the SI4730 AM/FM receiver module |
 
-See [`docs/wiring-diagram.html`](docs/wiring-diagram.html) for how everything connects.
+![Wiring diagram: RTC, light sensor, 7-segment display, and FM radio module daisy-chained on one I2C bus off the ESP32-S3 Feather; battery through a slide switch; audio amp and speaker; snooze button and rotary encoder on direct GPIO](docs/wiring-diagram.png)
+
+Rendered from [`docs/wiring-diagram.html`](docs/wiring-diagram.html), which has the full interactive version plus wiring notes/assumptions.
 
 ## Controls
 
