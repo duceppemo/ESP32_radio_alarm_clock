@@ -9,14 +9,9 @@
 [![Status](https://img.shields.io/badge/status-firmware%20ready%2C%20hardware%20pending-yellow)](docs/firmware.md)
 
 <p align="center">
-  <img src="docs/images/hero.jpg" alt="ESP32 radio alarm clock glowing softly on a nightstand beside a bed, morning light coming through the window" width="760">
+  <img src="docs/images/hero.png" alt="ESP32 radio alarm clock glowing softly on a nightstand beside a bed, morning light coming through the window" width="760">
 </p>
-
-<!--
-  Hero image slot: docs/images/hero.jpg (not committed yet -- drop a photo
-  in once one exists; nothing else needs to change). Landscape, ~1600px
-  wide works well; the device should read as the clear subject of the frame.
--->
+<p align="center"><sub><i>Concept render — hardware not yet built (see Status badge above).</i></sub></p>
 
 ## Contents
 
