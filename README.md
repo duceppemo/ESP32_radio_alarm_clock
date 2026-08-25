@@ -13,4 +13,5 @@
 | 1 | JST SH 4-Pin to Premium Male Header Cable | 4209 | 1528-4209-ND |
 | 2 | JST PH 3-Pin to Male Header Cable | 3893 | 1528-2696-ND |
 | 1 | Speaker 4 Ohm, Top Port | 3351 | 3351-ND |
+| 1 | SI4730-D60-GMR AM/FM Receiver Module (PL102BA-S V2.1, DSP Digital Tuner) | SI4730-D60-GMR | — |
 
