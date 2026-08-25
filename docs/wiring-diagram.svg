@@ -1,0 +1,161 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg viewBox="0 0 1400 780" width="1400" height="780" role="img" aria-label="Wiring diagram of the ESP32-S3 Reverse TFT Feather at the center, with the DS3231 RTC, VEML7700 light sensor, 7-segment display, and SI4730 radio module daisy-chained on one I2C STEMMA QT bus above it; an FM wire antenna feeding the radio module; a CR1220 coin cell seated in the RTC's own holder; an analog audio line running directly from the radio module down to the STEMMA amp and on to the speaker, bypassing the Feather entirely; a lithium battery through an inline SPDT switch on the positive lead only into its left side; and a panel snooze button, rotary encoder, and piezo buzzer wired directly to spare GPIO pins below it." xmlns="http://www.w3.org/2000/svg">
+
+  <!-- page background -->
+  <rect x="0" y="0" width="1400" height="780" fill="#eef1f3"/>
+
+  <!-- drawing frame -->
+  <rect x="20" y="20" width="1360" height="740" fill="none" stroke="#c7ced6" stroke-width="1"/>
+  <g stroke="#9aa5b1" stroke-width="1.5" opacity="0.8">
+    <path d="M20,44 20,20 44,20" fill="none"/>
+    <path d="M1356,20 1380,20 1380,44" fill="none"/>
+    <path d="M1380,736 1380,760 1356,760" fill="none"/>
+    <path d="M44,760 20,760 20,736" fill="none"/>
+  </g>
+  <text x="1372" y="748" text-anchor="end" font-family="IBM Plex Mono, ui-monospace, monospace" font-size="11" fill="#5b6672">ESP32_radio_alarm_clock &#183; wiring ref &#183; rev A</text>
+
+  <!-- ============ WIRES (drawn first, under boxes) ============ -->
+
+  <!-- I2C / STEMMA QT bus -->
+  <g fill="none" stroke="#0e7c86" stroke-width="2.5">
+    <path d="M560,330 560,145 460,145"/>
+    <path d="M620,145 680,145"/>
+    <path d="M840,145 900,145"/>
+    <path d="M1060,145 1150,145"/>
+  </g>
+  <text x="565" y="255" font-family="IBM Plex Mono, ui-monospace, monospace" font-size="12" fill="#0e7c86">I2C &#183; STEMMA QT</text>
+  <text x="1063" y="132" font-family="IBM Plex Mono, ui-monospace, monospace" font-size="11" fill="#0e7c86">SH4&#8594;header cable</text>
+
+  <!-- FM antenna feed into the radio module -->
+  <path d="M1255,76 1255,100" fill="none" stroke="#5b6672" stroke-width="2.5"/>
+  <text x="1263" y="92" font-family="IBM Plex Mono, ui-monospace, monospace" font-size="11" fill="#5b6672">RF</text>
+  <circle cx="1255" cy="76" r="3.5" fill="#5b6672"/>
+  <circle cx="1255" cy="100" r="3.5" fill="#5b6672"/>
+
+  <!-- power: battery + through switch to Feather BAT+ -->
+  <g fill="none" stroke="#b8402c" stroke-width="2.5">
+    <path d="M210,390 270,390"/>
+    <path d="M410,390 490,388"/>
+  </g>
+  <text x="215" y="378" font-family="IBM Plex Mono, ui-monospace, monospace" font-size="11" fill="#b8402c">BAT+</text>
+
+  <!-- ground: battery - straight to Feather GND, bypassing the switch -->
+  <path d="M210,432 210,478 490,478 490,434" fill="none" stroke="#3a4450" stroke-width="2.5" stroke-dasharray="1 6" stroke-linecap="round"/>
+  <text x="300" y="472" font-family="IBM Plex Mono, ui-monospace, monospace" font-size="12" fill="#3a4450">GND (bypasses switch)</text>
+
+  <!-- audio: Radio module -> Amp -> Speaker (pure analog, never touches the Feather) -->
+  <g fill="none" stroke="#b06a15" stroke-width="2.5">
+    <path d="M1200,190 1200,320 925,320 925,365"/>
+    <path d="M1010,385 1090,385"/>
+    <path d="M1010,410 1090,410"/>
+  </g>
+  <text x="1000" y="308" text-anchor="end" font-family="IBM Plex Mono, ui-monospace, monospace" font-size="12" fill="#b06a15">AUDIO OUT (analog, radio module)</text>
+  <text x="1020" y="428" font-family="IBM Plex Mono, ui-monospace, monospace" font-size="11" fill="#b06a15">SPK + / &#8211; (soldered)</text>
+
+  <!-- GPIO: Feather -> snooze button, Feather -> rotary encoder, Feather -> piezo buzzer -->
+  <g fill="none" stroke="#6d4fa0" stroke-width="2.5">
+    <path d="M560,510 560,590 515,590 515,630"/>
+    <path d="M700,510 700,590 755,590 755,630"/>
+    <path d="M750,420 970,420 970,630"/>
+  </g>
+  <text x="410" y="605" font-family="IBM Plex Mono, ui-monospace, monospace" font-size="12" fill="#6d4fa0">GPIO IN + GND</text>
+  <text x="765" y="605" font-family="IBM Plex Mono, ui-monospace, monospace" font-size="12" fill="#6d4fa0">GPIO &#215;3 (A / B / SW)</text>
+  <text x="980" y="418" font-family="IBM Plex Mono, ui-monospace, monospace" font-size="12" fill="#6d4fa0">GPIO OUT + GND</text>
+
+  <!-- connection dots -->
+  <g fill="#0e7c86">
+    <circle cx="560" cy="330" r="3.5"/><circle cx="460" cy="145" r="3.5"/>
+    <circle cx="620" cy="145" r="3.5"/><circle cx="680" cy="145" r="3.5"/>
+    <circle cx="840" cy="145" r="3.5"/><circle cx="900" cy="145" r="3.5"/>
+    <circle cx="1060" cy="145" r="3.5"/><circle cx="1150" cy="145" r="3.5"/>
+  </g>
+  <g fill="#b8402c">
+    <circle cx="210" cy="390" r="3.5"/><circle cx="270" cy="390" r="3.5"/>
+    <circle cx="410" cy="390" r="3.5"/><circle cx="490" cy="388" r="3.5"/>
+  </g>
+  <g fill="#3a4450">
+    <circle cx="210" cy="432" r="3.5"/><circle cx="490" cy="434" r="3.5"/>
+  </g>
+  <g fill="#b06a15">
+    <circle cx="1200" cy="190" r="3.5"/><circle cx="925" cy="365" r="3.5"/>
+    <circle cx="1010" cy="385" r="3.5"/><circle cx="1090" cy="385" r="3.5"/>
+    <circle cx="1010" cy="410" r="3.5"/><circle cx="1090" cy="410" r="3.5"/>
+  </g>
+  <g fill="#6d4fa0">
+    <circle cx="560" cy="510" r="3.5"/><circle cx="515" cy="630" r="3.5"/>
+    <circle cx="700" cy="510" r="3.5"/><circle cx="755" cy="630" r="3.5"/>
+    <circle cx="750" cy="420" r="3.5"/><circle cx="970" cy="630" r="3.5"/>
+  </g>
+
+  <!-- ============ COMPONENTS ============ -->
+
+  <!-- FM antenna -->
+  <g font-family="IBM Plex Sans, ui-sans-serif, sans-serif">
+    <rect x="1170" y="26" width="170" height="50" fill="#ffffff" stroke="#1b2430" stroke-width="1.5"/>
+    <text x="1255" y="48" text-anchor="middle" font-size="13" font-weight="600" fill="#1b2430">FM Wire Antenna</text>
+    <text x="1255" y="65" text-anchor="middle" font-family="IBM Plex Mono, ui-monospace, monospace" font-size="10.5" fill="#5b6672">~75cm, to ANT pad</text>
+  </g>
+
+  <!-- Row 1: I2C chain -->
+  <g font-family="IBM Plex Sans, ui-sans-serif, sans-serif">
+    <rect x="460" y="100" width="160" height="90" fill="#ffffff" stroke="#1b2430" stroke-width="1.5"/>
+    <text x="540" y="136" text-anchor="middle" font-size="15" font-weight="600" fill="#1b2430">Precision RTC</text>
+    <text x="540" y="158" text-anchor="middle" font-family="IBM Plex Mono, ui-monospace, monospace" font-size="12" fill="#5b6672">DS3231</text>
+    <text x="540" y="176" text-anchor="middle" font-family="IBM Plex Mono, ui-monospace, monospace" font-size="10" fill="#5b6672">+ CR1220 (onboard)</text>
+
+    <rect x="680" y="100" width="160" height="90" fill="#ffffff" stroke="#1b2430" stroke-width="1.5"/>
+    <text x="760" y="136" text-anchor="middle" font-size="15" font-weight="600" fill="#1b2430">Light Sensor</text>
+    <text x="760" y="160" text-anchor="middle" font-family="IBM Plex Mono, ui-monospace, monospace" font-size="12" fill="#5b6672">VEML7700</text>
+
+    <rect x="900" y="100" width="160" height="90" fill="#ffffff" stroke="#1b2430" stroke-width="1.5"/>
+    <text x="980" y="130" text-anchor="middle" font-size="15" font-weight="600" fill="#1b2430">7-Segment</text>
+    <text x="980" y="148" text-anchor="middle" font-size="15" font-weight="600" fill="#1b2430">Display</text>
+    <text x="980" y="168" text-anchor="middle" font-family="IBM Plex Mono, ui-monospace, monospace" font-size="12" fill="#5b6672">I2C, red</text>
+
+    <rect x="1150" y="100" width="210" height="90" fill="#ffffff" stroke="#1b2430" stroke-width="1.5"/>
+    <text x="1255" y="130" text-anchor="middle" font-size="15" font-weight="600" fill="#1b2430">FM/AM Radio</text>
+    <text x="1255" y="148" text-anchor="middle" font-size="15" font-weight="600" fill="#1b2430">Module</text>
+    <text x="1255" y="168" text-anchor="middle" font-family="IBM Plex Mono, ui-monospace, monospace" font-size="12" fill="#5b6672">SI4730-D60-GMR</text>
+  </g>
+
+  <!-- Hub row: battery, switch, feather, amp, speaker -->
+  <g font-family="IBM Plex Sans, ui-sans-serif, sans-serif">
+    <rect x="60" y="365" width="150" height="90" fill="#ffffff" stroke="#1b2430" stroke-width="1.5"/>
+    <text x="135" y="401" text-anchor="middle" font-size="15" font-weight="600" fill="#1b2430">Li-Po Battery</text>
+    <text x="135" y="425" text-anchor="middle" font-family="IBM Plex Mono, ui-monospace, monospace" font-size="12" fill="#5b6672">3.7 V single-cell</text>
+
+    <rect x="270" y="365" width="140" height="90" fill="#ffffff" stroke="#1b2430" stroke-width="1.5"/>
+    <text x="340" y="395" text-anchor="middle" font-size="15" font-weight="600" fill="#1b2430">SPDT Slide</text>
+    <text x="340" y="413" text-anchor="middle" font-size="15" font-weight="600" fill="#1b2430">Switch</text>
+    <text x="340" y="435" text-anchor="middle" font-family="IBM Plex Mono, ui-monospace, monospace" font-size="11" fill="#5b6672">hard on/off</text>
+
+    <rect x="490" y="330" width="260" height="180" fill="#ffffff" stroke="#1b2430" stroke-width="2"/>
+    <text x="620" y="404" text-anchor="middle" font-size="16.5" font-weight="700" fill="#1b2430">ESP32-S3 Reverse</text>
+    <text x="620" y="425" text-anchor="middle" font-size="16.5" font-weight="700" fill="#1b2430">TFT Feather</text>
+    <text x="620" y="450" text-anchor="middle" font-family="IBM Plex Mono, ui-monospace, monospace" font-size="12" fill="#5b6672">built-in TFT &#183; 3 buttons</text>
+    <text x="620" y="466" text-anchor="middle" font-family="IBM Plex Mono, ui-monospace, monospace" font-size="12" fill="#5b6672">USB-C prog/charge</text>
+
+    <rect x="840" y="365" width="170" height="90" fill="#ffffff" stroke="#1b2430" stroke-width="1.5"/>
+    <text x="925" y="401" text-anchor="middle" font-size="15" font-weight="600" fill="#1b2430">STEMMA Amp</text>
+    <text x="925" y="425" text-anchor="middle" font-family="IBM Plex Mono, ui-monospace, monospace" font-size="12" fill="#5b6672">mono, class D</text>
+
+    <rect x="1090" y="365" width="150" height="90" fill="#ffffff" stroke="#1b2430" stroke-width="1.5"/>
+    <text x="1165" y="401" text-anchor="middle" font-size="15" font-weight="600" fill="#1b2430">Speaker</text>
+    <text x="1165" y="425" text-anchor="middle" font-family="IBM Plex Mono, ui-monospace, monospace" font-size="12" fill="#5b6672">4 &#937;, top port</text>
+  </g>
+
+  <!-- Row 3: GPIO controls -->
+  <g font-family="IBM Plex Sans, ui-sans-serif, sans-serif">
+    <rect x="430" y="630" width="170" height="90" fill="#ffffff" stroke="#1b2430" stroke-width="1.5"/>
+    <text x="515" y="666" text-anchor="middle" font-size="15" font-weight="600" fill="#1b2430">Snooze Button</text>
+    <text x="515" y="690" text-anchor="middle" font-family="IBM Plex Mono, ui-monospace, monospace" font-size="12" fill="#5b6672">panel-mount tactile</text>
+
+    <rect x="660" y="630" width="190" height="90" fill="#ffffff" stroke="#1b2430" stroke-width="1.5"/>
+    <text x="755" y="666" text-anchor="middle" font-size="15" font-weight="600" fill="#1b2430">Rotary Encoder</text>
+    <text x="755" y="690" text-anchor="middle" font-family="IBM Plex Mono, ui-monospace, monospace" font-size="12" fill="#5b6672">panel-mount, volume</text>
+
+    <rect x="890" y="630" width="160" height="90" fill="#ffffff" stroke="#1b2430" stroke-width="1.5"/>
+    <text x="970" y="666" text-anchor="middle" font-size="15" font-weight="600" fill="#1b2430">Piezo Buzzer</text>
+    <text x="970" y="690" text-anchor="middle" font-family="IBM Plex Mono, ui-monospace, monospace" font-size="11" fill="#5b6672">alarm tone, GPIO tone()</text>
+  </g>
+</svg>
