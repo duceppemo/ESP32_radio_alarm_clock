@@ -38,6 +38,20 @@ inline int64_t days_from_civil(int32_t y, uint32_t m, uint32_t d) {
   const uint32_t doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;             // [0, 146096]
   return static_cast<int64_t>(era) * 146097 + static_cast<int64_t>(doe) - 719468;
 }
+
+// Inverse of days_from_civil.
+inline void civil_from_days(int64_t z, int32_t &y, uint32_t &m, uint32_t &d) {
+  z += 719468;
+  const int64_t era = floorDiv(z, 146097);
+  const uint32_t doe = static_cast<uint32_t>(z - era * 146097);                 // [0, 146096]
+  const uint32_t yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;    // [0, 399]
+  const int32_t yFromEra = static_cast<int32_t>(yoe) + static_cast<int32_t>(era) * 400;
+  const uint32_t doy = doe - (365 * yoe + yoe / 4 - yoe / 100);                 // [0, 365]
+  const uint32_t mp = (5 * doy + 2) / 153;                                      // [0, 11]
+  d = doy - (153 * mp + 2) / 5 + 1;                                             // [1, 31]
+  m = mp + (mp < 10 ? 3 : -9);                                                  // [1, 12]
+  y = yFromEra + (m <= 2);
+}
 }  // namespace native_fakes_detail
 
 class TimeSpan {
@@ -73,10 +87,43 @@ class DateTime {
     int64_t days = native_fakes_detail::floorDiv(unixtime_, 86400);
     return static_cast<uint8_t>(native_fakes_detail::floorMod(days + 4, 7));
   }
+  uint16_t year() const {
+    int32_t y;
+    uint32_t m, d;
+    native_fakes_detail::civil_from_days(native_fakes_detail::floorDiv(unixtime_, 86400), y, m, d);
+    return static_cast<uint16_t>(y);
+  }
+  uint8_t month() const {
+    int32_t y;
+    uint32_t m, d;
+    native_fakes_detail::civil_from_days(native_fakes_detail::floorDiv(unixtime_, 86400), y, m, d);
+    return static_cast<uint8_t>(m);
+  }
+  uint8_t day() const {
+    int32_t y;
+    uint32_t m, d;
+    native_fakes_detail::civil_from_days(native_fakes_detail::floorDiv(unixtime_, 86400), y, m, d);
+    return static_cast<uint8_t>(d);
+  }
   int64_t unixtime() const { return unixtime_; }
 
   DateTime operator+(const TimeSpan &span) const { return DateTime(unixtime_ + span.totalseconds()); }
 
  private:
   int64_t unixtime_;
+};
+
+// Minimal native stand-in for the RTC_DS3231 hardware driver -- MenuSystem
+// only calls adjust() (to set the time manually from the on-device menu),
+// but now()/begin()/lostPower() are included too for parity with the real
+// class, in case a future test needs them.
+class RTC_DS3231 {
+ public:
+  bool begin() { return true; }
+  bool lostPower() { return false; }
+  void adjust(const DateTime &dt) { current_ = dt; }
+  DateTime now() const { return current_; }
+
+ private:
+  DateTime current_;
 };

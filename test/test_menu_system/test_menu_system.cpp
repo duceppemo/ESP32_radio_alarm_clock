@@ -47,7 +47,7 @@ void test_toggling_an_alarm_enabled_through_the_full_edit_flow() {
   RadioTuner radio;
   radio.begin();
   Adafruit_ST7789 tft(0, 0, 0);
-  MenuSystem menu(tft, alarms, radio, nullptr);
+  MenuSystem menu(tft, alarms, radio, nullptr, nullptr);
   menu.begin();
 
   TEST_ASSERT_FALSE(alarms.alarm(0).enabled);
@@ -69,7 +69,7 @@ void test_editing_hour_and_minute_then_saving() {
   RadioTuner radio;
   radio.begin();
   Adafruit_ST7789 tft(0, 0, 0);
-  MenuSystem menu(tft, alarms, radio, nullptr);
+  MenuSystem menu(tft, alarms, radio, nullptr, nullptr);
   menu.begin();
 
   tap(Pins::MenuSelect, menu);  // Home -> AlarmList
@@ -95,7 +95,7 @@ void test_cancelling_an_edit_with_long_press_discards_changes() {
   RadioTuner radio;
   radio.begin();
   Adafruit_ST7789 tft(0, 0, 0);
-  MenuSystem menu(tft, alarms, radio, nullptr);
+  MenuSystem menu(tft, alarms, radio, nullptr, nullptr);
   menu.begin();
 
   tap(Pins::MenuSelect, menu);   // Home -> AlarmList
@@ -113,7 +113,7 @@ void test_radio_screen_tune_up_and_mute() {
   radio.begin();
   uint16_t startFreq = radio.frequency10kHz();
   Adafruit_ST7789 tft(0, 0, 0);
-  MenuSystem menu(tft, alarms, radio, nullptr);
+  MenuSystem menu(tft, alarms, radio, nullptr, nullptr);
   menu.begin();
 
   tap(Pins::MenuDown, menu);    // Home cursor: Alarms(0) -> Radio(1)
@@ -133,7 +133,7 @@ void test_ringing_alarm_short_press_snoozes() {
   RadioTuner radio;
   radio.begin();
   Adafruit_ST7789 tft(0, 0, 0);
-  MenuSystem menu(tft, alarms, radio, nullptr);
+  MenuSystem menu(tft, alarms, radio, nullptr, nullptr);
   menu.begin();
 
   Alarm a;
@@ -156,7 +156,7 @@ void test_ringing_alarm_long_press_dismisses() {
   RadioTuner radio;
   radio.begin();
   Adafruit_ST7789 tft(0, 0, 0);
-  MenuSystem menu(tft, alarms, radio, nullptr);
+  MenuSystem menu(tft, alarms, radio, nullptr, nullptr);
   menu.begin();
 
   Alarm a;
@@ -172,6 +172,80 @@ void test_ringing_alarm_long_press_dismisses() {
   TEST_ASSERT_EQUAL(static_cast<int>(AlarmState::Idle), static_cast<int>(alarms.state()));
 }
 
+void test_set_time_saves_the_new_hour_and_minute() {
+  AlarmClock alarms;
+  alarms.begin();
+  RadioTuner radio;
+  radio.begin();
+  RTC_DS3231 rtc;
+  rtc.adjust(kNow);
+  Adafruit_ST7789 tft(0, 0, 0);
+  MenuSystem menu(tft, alarms, radio, nullptr, &rtc);
+  menu.begin();
+
+  tap(Pins::MenuDown, menu);    // Home cursor: Alarms(0) -> Radio(1)
+  tap(Pins::MenuDown, menu);    // Radio(1) -> WiFi(2)
+  tap(Pins::MenuDown, menu);    // WiFi(2) -> Time(3)
+  tap(Pins::MenuSelect, menu);  // enter Set Time, field 0 = Hour (starts at kNow's 7:00)
+
+  tap(Pins::MenuUp, menu);      // hour 7 -> 8
+  tap(Pins::MenuUp, menu);      // hour 8 -> 9
+
+  tap(Pins::MenuSelect, menu);  // advance to field 1 = Minute
+  tap(Pins::MenuUp, menu);      // minute 0 -> 1
+
+  tap(Pins::MenuSelect, menu);  // advance to field 2 = Save
+  tap(Pins::MenuSelect, menu);  // commit
+
+  TEST_ASSERT_EQUAL(9, rtc.now().hour());
+  TEST_ASSERT_EQUAL(1, rtc.now().minute());
+  // The date must carry over from the current time, not reset.
+  TEST_ASSERT_EQUAL(kNow.year(), rtc.now().year());
+  TEST_ASSERT_EQUAL(kNow.month(), rtc.now().month());
+  TEST_ASSERT_EQUAL(kNow.day(), rtc.now().day());
+}
+
+void test_set_time_cancelled_with_long_press_does_not_save() {
+  AlarmClock alarms;
+  alarms.begin();
+  RadioTuner radio;
+  radio.begin();
+  RTC_DS3231 rtc;
+  rtc.adjust(kNow);
+  Adafruit_ST7789 tft(0, 0, 0);
+  MenuSystem menu(tft, alarms, radio, nullptr, &rtc);
+  menu.begin();
+
+  tap(Pins::MenuDown, menu);
+  tap(Pins::MenuDown, menu);
+  tap(Pins::MenuDown, menu);
+  tap(Pins::MenuSelect, menu);  // enter Set Time
+  tap(Pins::MenuUp, menu);      // hour 7 -> 8 (working copy only)
+  hold(Pins::MenuSelect, menu); // cancel
+
+  TEST_ASSERT_EQUAL(kNow.hour(), rtc.now().hour());
+}
+
+void test_set_time_with_no_rtc_does_not_crash() {
+  AlarmClock alarms;
+  alarms.begin();
+  RadioTuner radio;
+  radio.begin();
+  Adafruit_ST7789 tft(0, 0, 0);
+  MenuSystem menu(tft, alarms, radio, nullptr, nullptr);
+  menu.begin();
+
+  tap(Pins::MenuDown, menu);
+  tap(Pins::MenuDown, menu);
+  tap(Pins::MenuDown, menu);
+  tap(Pins::MenuSelect, menu);  // enter Set Time
+  tap(Pins::MenuSelect, menu);  // -> field 1
+  tap(Pins::MenuSelect, menu);  // -> field 2 (Save)
+  tap(Pins::MenuSelect, menu);  // commit with a null rtc_ -- must not crash
+
+  TEST_ASSERT_TRUE(true);  // reaching here without crashing is the assertion
+}
+
 int main(int argc, char **argv) {
   (void)argc;
   (void)argv;
@@ -182,5 +256,8 @@ int main(int argc, char **argv) {
   RUN_TEST(test_radio_screen_tune_up_and_mute);
   RUN_TEST(test_ringing_alarm_short_press_snoozes);
   RUN_TEST(test_ringing_alarm_long_press_dismisses);
+  RUN_TEST(test_set_time_saves_the_new_hour_and_minute);
+  RUN_TEST(test_set_time_cancelled_with_long_press_does_not_save);
+  RUN_TEST(test_set_time_with_no_rtc_does_not_crash);
   return UNITY_END();
 }

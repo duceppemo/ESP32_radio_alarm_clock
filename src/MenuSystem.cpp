@@ -39,12 +39,12 @@ WakeSource cycleWakeSource(WakeSource source, int8_t direction) {
   return static_cast<WakeSource>(next);
 }
 
-constexpr uint8_t kHomeMenuItems = 3;  // AlarmList, Radio, WifiInfo
+constexpr uint8_t kHomeMenuItems = 4;  // AlarmList, Radio, WifiInfo, SetTime
 }  // namespace
 
 MenuSystem::MenuSystem(Adafruit_ST7789 &tft, AlarmClock &alarms, RadioTuner &radio,
-                       BatteryMonitor *battery)
-    : tft_(tft), alarms_(alarms), radio_(radio), battery_(battery) {}
+                       BatteryMonitor *battery, RTC_DS3231 *rtc)
+    : tft_(tft), alarms_(alarms), radio_(radio), battery_(battery), rtc_(rtc) {}
 
 void MenuSystem::begin() {
   pinMode(Pins::MenuSelect, INPUT_PULLUP);
@@ -100,6 +100,12 @@ void MenuSystem::handleInput(const DateTime &now) {
             break;
           case 2:
             screen_ = MenuScreen::WifiInfo;
+            break;
+          case 3:
+            editingHour_ = now.hour();
+            editingMinute_ = now.minute();
+            editField_ = 0;
+            screen_ = MenuScreen::SetTime;
             break;
         }
       }
@@ -168,6 +174,31 @@ void MenuSystem::handleInput(const DateTime &now) {
       if (longPress) screen_ = MenuScreen::Home;
       break;
     }
+
+    case MenuScreen::SetTime: {
+      if (up || down) {
+        int8_t dir = up ? 1 : -1;
+        if (editField_ == 0) {
+          editingHour_ = (editingHour_ + 24 + dir) % 24;
+        } else if (editField_ == 1) {
+          editingMinute_ = (editingMinute_ + 60 + dir) % 60;
+        }
+      }
+      if (shortPress) {
+        if (editField_ >= 2) {
+          if (rtc_) {
+            rtc_->adjust(DateTime(now.year(), now.month(), now.day(), editingHour_, editingMinute_, 0));
+          }
+          screen_ = MenuScreen::Home;
+        } else {
+          editField_++;
+        }
+      }
+      if (longPress) {
+        screen_ = MenuScreen::Home;  // discard
+      }
+      break;
+    }
   }
 }
 
@@ -198,6 +229,9 @@ void MenuSystem::render(const DateTime &now, const String &wifiStatusLine) {
       break;
     case MenuScreen::WifiInfo:
       renderWifiInfo(wifiStatusLine);
+      break;
+    case MenuScreen::SetTime:
+      renderSetTime();
       break;
   }
 }
@@ -239,7 +273,7 @@ void MenuSystem::renderHome(const DateTime &now) {
   }
   tft_.println();
 
-  static const char *items[kHomeMenuItems] = {"Alarms", "Radio", "WiFi"};
+  static const char *items[kHomeMenuItems] = {"Alarms", "Radio", "WiFi", "Time"};
   for (uint8_t i = 0; i < kHomeMenuItems; i++) {
     tft_.printf("%s%s  ", i == cursor_ ? ">" : " ", items[i]);
   }
@@ -315,4 +349,31 @@ void MenuSystem::renderWifiInfo(const String &wifiStatusLine) {
   tft_.println(wifiStatusLine);
   tft_.println();
   tft_.println("hold: back");
+}
+
+void MenuSystem::renderSetTime() {
+  tft_.println("Set Time");
+  tft_.println();
+
+  static const char *rows[] = {"Hour", "Minute", "Save"};
+  for (uint8_t i = 0; i < 3; i++) {
+    tft_.print(i == editField_ ? "> " : "  ");
+    tft_.print(rows[i]);
+    switch (i) {
+      case 0:
+        tft_.printf(": %02d\n", editingHour_);
+        break;
+      case 1:
+        tft_.printf(": %02d\n", editingMinute_);
+        break;
+      default:
+        tft_.println();
+    }
+  }
+  if (!rtc_) {
+    tft_.println();
+    tft_.println("(no RTC -- won't save)");
+  }
+  tft_.println();
+  tft_.println("tap: next  hold: cancel");
 }

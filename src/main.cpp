@@ -31,7 +31,7 @@ RadioTuner radioTuner;
 AlarmSound alarmSound;
 WakeController wakeController(alarmClock, radioTuner, alarmSound);
 SnoozeController snoozeController(alarmClock, radioTuner);
-MenuSystem menu(tft, alarmClock, radioTuner, &battery);
+MenuSystem menu(tft, alarmClock, radioTuner, &battery, &rtc);
 WebDashboard dashboard(alarmClock, radioTuner, &rtc, &battery);
 
 DebouncedButton volumeUpButton(Pins::VolumeUp);
