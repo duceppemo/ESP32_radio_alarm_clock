@@ -399,7 +399,7 @@
       <li>The radio-to-amp audio run is drawn as a single generic line. The SI4730 module's audio-out pins are analog line-level and feed the amp's analog input directly &mdash; confirm the module's actual audio-out pin labels against its datasheet.</li>
       <li>Speaker leads are soldered directly to the amp's output; the BOM has no connector for that hop.</li>
       <li>The two <code>JST PH 3-pin</code> cables and one of the three <code>JST SH 4-pin</code> cables aren't yet assigned to a specific hop above &mdash; likely candidates are the amp's audio input and power breakout. Update this diagram once wired up.</li>
-      <li>Panel button, encoder, and piezo buzzer wiring assumes spare GPIO with internal pull-ups; confirm against the Feather's pinout before final assembly. The buzzer isn't yet in the hardware BOM &mdash; a small 5V/3V passive piezo driven by the ESP32's <code>tone()</code> is the assumption.</li>
+      <li>Panel button, encoder, and piezo buzzer wiring assumes spare GPIO with internal pull-ups; confirm against the Feather's pinout before final assembly. The BOM's piezo entry is still a placeholder (no part number picked yet) &mdash; a small passive piezo driven by the ESP32's <code>tone()</code> is the assumption.</li>
       <li>The <b>CR1220 coin cell</b> seats directly in the DS3231 breakout's onboard holder &mdash; it backs up the RTC when main power is off and needs no separate wiring.</li>
       <li>The <b>FM wire antenna</b> connects straight to the SI4730 module's antenna pad; length and routing affect reception, so keep it away from the speaker and switching power lines in the enclosure layout.</li>
     </ul>
