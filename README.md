@@ -18,6 +18,8 @@
 | 1 | Panel-mount rotary encoder | TBD | TBD | Physical volume control |
 | 1 | Lithium battery | TBD | TBD | Power source |
 | 1 | Inline SPDT slide switch | TBD | TBD | Hard on/off, wired inline on the battery line |
+| 1 | CR1220 coin cell | TBD | TBD | RTC backup power, seats in the DS3231 breakout's onboard holder |
+| 1 | FM wire antenna | TBD | TBD | Antenna for the SI4730 AM/FM receiver module |
 
 ## Controls
 
