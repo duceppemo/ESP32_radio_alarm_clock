@@ -46,7 +46,7 @@ The `[env:native]` build only compiles the `src/*.cpp` files listed in `build_sr
 
 | File | Responsibility |
 |---|---|
-| [`src/Config.h`](../src/Config.h) | Pin assignments and shared tunables. All non-bus pins (radio reset, snooze button, encoder, buzzer) are placeholders pending final wiring — see [`wiring-diagram.html`](wiring-diagram.html). |
+| [`src/Config.h`](../src/Config.h) | Pin assignments and shared tunables. All non-bus pins (radio reset, snooze/volume buttons, buzzer) are placeholders pending final wiring — see [`wiring-diagram.html`](wiring-diagram.html). |
 | [`src/AlarmClock.*`](../src/AlarmClock.h) | Up to 3 schedules and an idle/ringing/snoozed state machine, each with a `WakeSource` (radio / beep / chime). Persisted to NVS via `Preferences`. Only needs a `DateTime` per tick, so it's hardware-independent. |
 | [`src/RadioTuner.*`](../src/RadioTuner.h) | Wraps the [PU2CLR SI4735](https://github.com/pu2clr/SI4735) driver for the onboard SI4730 FM tuner: tune/seek/volume/mute, 6 presets, a sleep timer, all persisted to NVS (except the sunrise-ramp's intermediate volume steps, which use a transient setter that skips the flash write). This is control only, over I2C — see the audio-path note below. |
 | [`src/AlarmSound.*`](../src/AlarmSound.h) | Drives a piezo buzzer on `Pins::Buzzer` via Arduino's `tone()`/`noTone()`, stepping through a small pattern table: an urgent 1.8/2.2kHz alternating beep, or a gentler ascending A-major-triad chime (A5→C♯6→E6). Used both as a selectable wake sound and as the dead-air fallback below. Entirely unrelated to the radio's audio path. |
@@ -88,7 +88,7 @@ Each alarm picks a `WakeSource`: **Radio** ramps `RadioTuner`'s volume from `Ala
 
 ## Known gaps
 
-- Physical snooze button, rotary encoder volume control, and VEML7700-driven display auto-dimming have pins reserved in `Config.h` but no polling/handling code yet.
+- The physical snooze button and VEML7700-driven display auto-dimming have pins reserved in `Config.h` but no polling/handling code yet. (Volume is handled — `Pins::VolumeUp`/`VolumeDown`, polled in `main.cpp`'s loop().)
 - The `Config.h` pin assignments (including the buzzer) and the SI4735 reset-pin timing are unverified against real wiring.
 - The dead-air RSSI threshold (`AlarmConfig::DeadAirRssiThreshold`) is a guess and will need retuning once there's a real signal to measure.
 - The buzzer tone frequencies/pattern (`AlarmSound.cpp`) are a best guess at what sounds good on a typical passive piezo — worth listening to and retuning once hardware exists.

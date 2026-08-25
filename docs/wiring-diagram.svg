@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg viewBox="0 0 1400 780" width="1400" height="780" role="img" aria-label="Wiring diagram of the ESP32-S3 Reverse TFT Feather at the center, with the DS3231 RTC, VEML7700 light sensor, 7-segment display, and SI4730 radio module daisy-chained on one I2C STEMMA QT bus above it; an FM wire antenna feeding the radio module; a CR1220 coin cell seated in the RTC's own holder; an analog audio line running directly from the radio module down to the STEMMA amp and on to the speaker, bypassing the Feather entirely; a lithium battery through an inline SPDT switch on the positive lead only into its left side; and a panel snooze button, rotary encoder, and piezo buzzer wired directly to spare GPIO pins below it." xmlns="http://www.w3.org/2000/svg">
+<svg viewBox="0 0 1400 780" width="1400" height="780" role="img" aria-label="Wiring diagram of the ESP32-S3 Reverse TFT Feather at the center, with the DS3231 RTC, VEML7700 light sensor, 7-segment display, and SI4730 radio module daisy-chained on one I2C STEMMA QT bus above it; an FM wire antenna feeding the radio module; a CR1220 coin cell seated in the RTC's own holder; an analog audio line running directly from the radio module down to the STEMMA amp and on to the speaker, bypassing the Feather entirely; a lithium battery through an inline SPDT switch on the positive lead only into its left side; and a panel snooze button, two low-profile volume buttons, and a piezo buzzer wired directly to spare GPIO pins below it." xmlns="http://www.w3.org/2000/svg">
 
   <!-- page background -->
   <rect x="0" y="0" width="1400" height="780" fill="#eef1f3"/>
@@ -52,14 +52,14 @@
   <text x="1000" y="308" text-anchor="end" font-family="IBM Plex Mono, ui-monospace, monospace" font-size="14" fill="#b06a15">AUDIO OUT (analog, radio module)</text>
   <text x="1020" y="428" font-family="IBM Plex Mono, ui-monospace, monospace" font-size="13" fill="#b06a15">SPK +/&#8211;</text>
 
-  <!-- GPIO: Feather -> snooze button, Feather -> rotary encoder, Feather -> piezo buzzer -->
+  <!-- GPIO: Feather -> snooze button, Feather -> volume buttons, Feather -> piezo buzzer -->
   <g fill="none" stroke="#6d4fa0" stroke-width="2.5">
     <path d="M560,510 560,590 515,590 515,630"/>
     <path d="M700,510 700,590 755,590 755,630"/>
     <path d="M750,480 970,480 970,630"/>
   </g>
   <text x="410" y="605" font-family="IBM Plex Mono, ui-monospace, monospace" font-size="14" fill="#6d4fa0">GPIO IN + GND</text>
-  <text x="765" y="605" font-family="IBM Plex Mono, ui-monospace, monospace" font-size="14" fill="#6d4fa0">GPIO &#215;3 (A / B / SW)</text>
+  <text x="765" y="605" font-family="IBM Plex Mono, ui-monospace, monospace" font-size="14" fill="#6d4fa0">GPIO &#215;2 (Vol+ / Vol-)</text>
   <text x="760" y="468" font-family="IBM Plex Mono, ui-monospace, monospace" font-size="14" fill="#6d4fa0">GPIO OUT + GND</text>
 
   <!-- connection dots -->
@@ -151,8 +151,8 @@
     <text x="515" y="690" text-anchor="middle" font-family="IBM Plex Mono, ui-monospace, monospace" font-size="14" fill="#3f4750">panel-mount</text>
 
     <rect x="660" y="630" width="190" height="90" fill="#ffffff" stroke="#1b2430" stroke-width="1.5"/>
-    <text x="755" y="666" text-anchor="middle" font-size="17" font-weight="600" fill="#1b2430">Rotary Encoder</text>
-    <text x="755" y="690" text-anchor="middle" font-family="IBM Plex Mono, ui-monospace, monospace" font-size="14" fill="#3f4750">panel-mount, volume</text>
+    <text x="755" y="666" text-anchor="middle" font-size="17" font-weight="600" fill="#1b2430">Volume Buttons</text>
+    <text x="755" y="690" text-anchor="middle" font-family="IBM Plex Mono, ui-monospace, monospace" font-size="14" fill="#3f4750">panel-mount, Vol+ / Vol-</text>
 
     <rect x="890" y="630" width="160" height="90" fill="#ffffff" stroke="#1b2430" stroke-width="1.5"/>
     <text x="970" y="666" text-anchor="middle" font-size="17" font-weight="600" fill="#1b2430">Piezo Buzzer</text>

@@ -57,7 +57,7 @@ Off-the-shelf radio alarm clocks are either dumb (no scheduling beyond one or tw
 | 1 | Speaker 4 Ohm, Top Port | 3351 | 3351-ND | FM/AM radio audio output |
 | 1 | SI4730-D60-GMR AM/FM Receiver Module (PL102BA-S V2.1, DSP Digital Tuner) | SI4730-D60-GMR | — | AM/FM radio tuner |
 | 1 | Panel-mount tactile button | TBD | TBD | Dedicated front-panel snooze button, separate from the Feather's onboard buttons |
-| 1 | Panel-mount rotary encoder | TBD | TBD | Physical volume control |
+| 2 | Panel-mount tactile button (low-profile) | TBD | TBD | Volume up / volume down — a rotary encoder's knob was the only thing protruding from the enclosure, so this is two flush buttons instead |
 | 1 | Small piezo buzzer (passive, GPIO-driven) | TBD | TBD | Alarm tone, independent of the radio/speaker signal path |
 | 1 | Lithium battery | TBD | TBD | Power source |
 | 1 | Inline SPDT slide switch | TBD | TBD | Hard on/off, wired inline on the battery line |
@@ -66,7 +66,7 @@ Off-the-shelf radio alarm clocks are either dumb (no scheduling beyond one or tw
 
 ## Wiring
 
-![Wiring diagram: RTC, light sensor, 7-segment display, and FM radio module daisy-chained on one I2C bus off the ESP32-S3 Feather; battery through a slide switch; audio running straight from the radio module to the amp and speaker; snooze button, rotary encoder, and piezo buzzer on direct GPIO](docs/wiring-diagram.svg)
+![Wiring diagram: RTC, light sensor, 7-segment display, and FM radio module daisy-chained on one I2C bus off the ESP32-S3 Feather; battery through a slide switch; audio running straight from the radio module to the amp and speaker; snooze button, volume buttons, and piezo buzzer on direct GPIO](docs/wiring-diagram.svg)
 
 See [`docs/wiring-diagram.html`](docs/wiring-diagram.html) for wiring notes/assumptions (open it locally or via [an HTML preview service](https://htmlpreview.github.io/?https://github.com/duceppemo/ESP32_radio_alarm_clock/blob/master/docs/wiring-diagram.html) — GitHub shows `.html` files as source, not rendered, when opened directly).
 
@@ -92,13 +92,13 @@ It builds clean and its hardware-independent logic (alarm scheduling, radio wrap
 ## Controls
 
 - **Snooze**: dedicated panel-mount tactile button, front-mounted for easy reach, wired separately from the Feather's onboard top-mounted menu buttons.
-- **Volume**: small panel-mount rotary encoder for physical volume control.
+- **Volume**: two low-profile panel-mount tactile buttons (Vol+/Vol−) — flush with the enclosure, no protruding knob.
 - **Power**: inline SPDT slide switch on the battery line for a hard on/off.
 - **Menu**: more advanced settings/controls are handled via an on-screen menu on the Feather's built-in TFT, navigated using the Feather's onboard buttons.
 
 ## Roadmap
 
-- **Physical snooze/volume input**: the dedicated snooze button and rotary encoder have pins reserved but aren't polled by firmware yet.
+- **Physical snooze input**: the dedicated snooze button has a pin reserved but isn't polled by firmware yet. (Volume is done — see [Controls](#controls).)
 - **Auto-dimming**: use the VEML7700 ambient light reading to dim the 7-segment and TFT displays automatically.
 
 ## Enclosure
