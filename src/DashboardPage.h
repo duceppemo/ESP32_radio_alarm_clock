@@ -16,14 +16,17 @@ static const char kDashboardHtml[] = R"rawliteral(
   h2 { font-size: 1rem; color: #9aa5b1; margin-top: 2rem; }
   section { background: #1c2128; border-radius: 10px; padding: 1rem; margin-bottom: 1rem; }
   label { display: block; margin: 0.5rem 0 0.2rem; font-size: 0.85rem; color: #9aa5b1; }
-  input[type=text], input[type=password], input[type=number] { width: 100%; box-sizing: border-box; padding: 0.5rem; border-radius: 6px; border: 1px solid #3a4450; background: #12151a; color: #e8eaed; }
+  input[type=text], input[type=password], input[type=number], select, textarea { width: 100%; box-sizing: border-box; padding: 0.5rem; border-radius: 6px; border: 1px solid #3a4450; background: #12151a; color: #e8eaed; font-family: inherit; }
   button { padding: 0.5rem 0.9rem; border-radius: 6px; border: none; background: #3a6df0; color: white; margin: 0.2rem 0.3rem 0.2rem 0; cursor: pointer; }
   button.secondary { background: #3a4450; }
+  a.button { display: inline-block; text-decoration: none; padding: 0.5rem 0.9rem; border-radius: 6px; background: #3a4450; color: #e8eaed; margin: 0.2rem 0.3rem 0.2rem 0; }
   .row { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
   .days { display: flex; gap: 0.3rem; }
   .days label { display: flex; flex-direction: column; align-items: center; font-size: 0.7rem; margin: 0; }
   .status { font-size: 0.85rem; color: #9aa5b1; }
+  .status.low-battery { color: #e05252; }
   .alarm-ringing { border: 2px solid #e05252; }
+  textarea { height: 5rem; font-size: 0.75rem; }
 </style>
 </head>
 <body>
@@ -37,6 +40,7 @@ static const char kDashboardHtml[] = R"rawliteral(
     <label style="flex:1">Password<input type="password" id="wifiPassword"></label>
   </div>
   <button onclick="saveWifi()">Join network</button>
+  <a class="button" href="/update">Firmware update</a>
 </section>
 
 <section>
@@ -54,6 +58,18 @@ static const char kDashboardHtml[] = R"rawliteral(
   <input type="range" id="volumeSlider" min="0" max="63" oninput="setVolume(this.value)">
   <button class="secondary" id="muteBtn" onclick="toggleMute()">Mute</button>
   <div id="presets" class="row"></div>
+  <label>Sleep timer</label>
+  <div class="row">
+    <select id="sleepMinutes">
+      <option value="15">15 min</option>
+      <option value="30">30 min</option>
+      <option value="45">45 min</option>
+      <option value="60">60 min</option>
+    </select>
+    <button class="secondary" onclick="radioAction('sleepTimer', parseInt(document.getElementById('sleepMinutes').value, 10))">Set</button>
+    <button class="secondary" onclick="radioAction('sleepTimer', 0)">Cancel</button>
+    <span id="sleepStatus" class="status"></span>
+  </div>
 </section>
 
 <section>
@@ -65,6 +81,15 @@ static const char kDashboardHtml[] = R"rawliteral(
   </div>
 </section>
 
+<section>
+  <h2>Settings backup</h2>
+  <textarea id="settingsBlob" placeholder="Export shows alarms + radio presets/volume as JSON here. Paste a previous export and Apply to restore it."></textarea>
+  <div class="row">
+    <button class="secondary" onclick="exportSettings()">Export</button>
+    <button onclick="importSettings()">Apply</button>
+  </div>
+</section>
+
 <script>
 const dayLabels = ['Su','Mo','Tu','We','Th','Fr','Sa'];
 
@@ -73,11 +98,17 @@ async function api(path, options) {
   return res.json();
 }
 
+const wakeSources = [['radio', 'Radio'], ['beep', 'Beep'], ['chime', 'Chime']];
+
 async function refresh() {
   try {
     const status = await api('/api/status');
-    document.getElementById('statusLine').textContent =
-      `${status.mode === 'ap' ? 'Setup mode' : 'Connected: ' + status.ssid} · ${status.ip} · ${status.time || 'no RTC'} · alarm: ${status.alarmState}`;
+    const battery = status.batteryPercent === undefined ? '' :
+      ` · battery: ${status.batteryPercent.toFixed(0)}%${status.batteryLow ? ' (low!)' : ''}`;
+    const statusEl = document.getElementById('statusLine');
+    statusEl.textContent =
+      `${status.mode === 'ap' ? 'Setup mode' : 'Connected: ' + status.ssid} · ${status.ip} · ${status.time || 'no RTC'} · alarm: ${status.alarmState}${battery}`;
+    statusEl.className = 'status' + (status.batteryLow ? ' low-battery' : '');
   } catch (e) { /* device may be mid-reboot after WiFi save */ }
 
   try {
@@ -86,6 +117,8 @@ async function refresh() {
     document.getElementById('volumeValue').textContent = radio.volume;
     document.getElementById('volumeSlider').value = radio.volume;
     document.getElementById('muteBtn').textContent = radio.muted ? 'Unmute' : 'Mute';
+    document.getElementById('sleepStatus').textContent =
+      radio.sleepTimerMinutes > 0 ? `${radio.sleepTimerMinutes} min left` : '';
     const presetsEl = document.getElementById('presets');
     presetsEl.innerHTML = '';
     radio.presets.forEach((freq, i) => {
@@ -109,6 +142,7 @@ async function refresh() {
         <input type="number" value="${a.hour}" min="0" max="23" style="width:3.5em" id="h${i}">:
         <input type="number" value="${a.minute}" min="0" max="59" style="width:3.5em" id="m${i}">
         <span class="days">${dayLabels.map((d, di) => `<label><input type="checkbox" ${a.days[di] ? 'checked' : ''} id="d${i}_${di}">${d}</label>`).join('')}</span>
+        <select id="w${i}" style="width:auto">${wakeSources.map(([v, l]) => `<option value="${v}" ${a.wakeSource === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
         <button onclick="updateAlarm(${i})">Save</button>`;
       list.appendChild(div);
     });
@@ -143,6 +177,7 @@ async function updateAlarm(i) {
       enabled: document.getElementById(`en${i}`).checked,
       hour: parseInt(document.getElementById(`h${i}`).value, 10),
       minute: parseInt(document.getElementById(`m${i}`).value, 10),
+      wakeSource: document.getElementById(`w${i}`).value,
       days,
     }) });
   refresh();
@@ -151,6 +186,22 @@ async function updateAlarm(i) {
 async function alarmAction(action) {
   await api('/api/alarm/' + action, { method: 'POST' });
   refresh();
+}
+
+async function exportSettings() {
+  const settings = await api('/api/settings');
+  document.getElementById('settingsBlob').value = JSON.stringify(settings, null, 2);
+}
+
+async function importSettings() {
+  try {
+    const parsed = JSON.parse(document.getElementById('settingsBlob').value);
+    await api('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(parsed) });
+    refresh();
+  } catch (e) {
+    alert('Invalid JSON: ' + e.message);
+  }
 }
 
 refresh();
