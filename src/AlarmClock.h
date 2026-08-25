@@ -5,6 +5,10 @@
 
 #include "Config.h"
 
+// What plays when this alarm fires. Radio falls back to a tone itself if the
+// tuned station turns out to be dead air -- see AlarmConfig::DeadAirRssi*.
+enum class WakeSource : uint8_t { Radio = 0, ClassicBeep = 1, Chime = 2 };
+
 struct Alarm {
   uint8_t hour = 7;
   uint8_t minute = 0;
@@ -12,6 +16,7 @@ struct Alarm {
   // (matches RTClib's DateTime::dayOfTheWeek()). Defaults to weekdays.
   uint8_t daysMask = 0b0111110;
   bool enabled = false;
+  WakeSource wakeSource = WakeSource::Radio;
 
   bool activeOn(uint8_t dayOfWeek) const { return daysMask & (1 << dayOfWeek); }
 };
