@@ -74,7 +74,7 @@ See [`docs/wiring-diagram.html`](docs/wiring-diagram.html) for wiring notes/assu
 
 A PlatformIO project targeting the ESP32-S3 via the [pioarduino](https://github.com/pioarduino/platform-espressif32) platform fork. Covers alarm scheduling (sunrise ramp + dead-air fallback), FM radio control, an on-device TFT menu, battery monitoring, NTP time sync, OTA updates, and the WiFi setup/status web dashboard.
 
-It builds clean and its hardware-independent logic (alarm scheduling, radio wrapper, wake orchestration, on-device menu, the snooze button's dual behavior) has 39 passing unit tests that run on every push — see the CI badge above — but it hasn't been flashed to real hardware yet, since none of the parts have arrived. See [`docs/firmware.md`](docs/firmware.md) for the module architecture, build/flash instructions, the dashboard's API, and current known gaps.
+It builds clean and its hardware-independent logic (alarm scheduling, radio wrapper, wake orchestration, on-device menu, the snooze button's dual behavior) has 42 passing unit tests that run on every push — see the CI badge above — but it hasn't been flashed to real hardware yet, since none of the parts have arrived. See [`docs/firmware.md`](docs/firmware.md) for the module architecture, build/flash instructions, the dashboard's API, and current known gaps.
 
 ## Getting started
 
@@ -94,7 +94,7 @@ It builds clean and its hardware-independent logic (alarm scheduling, radio wrap
 - **Snooze**: dedicated panel-mount tactile button, front-mounted for easy reach, wired separately from the Feather's onboard top-mounted menu buttons. Dual behavior: while an alarm is ringing/snoozed, it snoozes it; otherwise, if the radio is on, it toggles a sleep timer instead (default 30 min), shown with a live countdown on the TFT's Home screen.
 - **Volume**: two low-profile panel-mount tactile buttons (Vol+/Vol−) — flush with the enclosure, no protruding knob.
 - **Power**: inline SPDT slide switch on the battery line for a hard on/off.
-- **Menu**: more advanced settings/controls are handled via an on-screen menu on the Feather's built-in TFT, navigated using the Feather's onboard buttons.
+- **Menu**: more advanced settings/controls are handled via an on-screen menu on the Feather's built-in TFT, navigated using the Feather's onboard buttons — including alarm scheduling, radio tuning, and manually setting the time (handy before WiFi/NTP is set up, or if it's ever unreachable).
 
 ## Roadmap
 
