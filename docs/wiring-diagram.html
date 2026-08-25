@@ -9,7 +9,7 @@
     --paper: #eef1f3;
     --surface: #ffffff;
     --ink: #1b2430;
-    --ink-dim: #5b6672;
+    --ink-dim: #3f4750;
     --line: #c7ced6;
     --line-strong: #9aa5b1;
     --accent-bus: #0e7c86;
@@ -242,7 +242,7 @@
           <path d="M1060,145 1150,145"/>
         </g>
         <text x="565" y="255" font-family="IBM Plex Mono, monospace" font-size="12" fill="var(--accent-bus)">I2C &middot; STEMMA QT</text>
-        <text x="1063" y="132" font-family="IBM Plex Mono, monospace" font-size="11" fill="var(--accent-bus)">SH4&#8594;header cable</text>
+        <text x="1063" y="132" font-family="IBM Plex Mono, monospace" font-size="11" fill="var(--accent-bus)">SH4 cable</text>
 
         <!-- FM antenna feed into the radio module -->
         <path d="M1255,76 1255,100" fill="none" stroke="var(--ink-dim)" stroke-width="2.5"/>
@@ -268,17 +268,17 @@
           <path d="M1010,410 1090,410"/>
         </g>
         <text x="1000" y="308" text-anchor="end" font-family="IBM Plex Mono, monospace" font-size="12" fill="var(--accent-audio)">AUDIO OUT (analog, radio module)</text>
-        <text x="1020" y="428" font-family="IBM Plex Mono, monospace" font-size="11" fill="var(--accent-audio)">SPK + / &ndash; (soldered)</text>
+        <text x="1020" y="428" font-family="IBM Plex Mono, monospace" font-size="11" fill="var(--accent-audio)">SPK +/&ndash;</text>
 
         <!-- GPIO: Feather -> snooze button, Feather -> rotary encoder, Feather -> piezo buzzer -->
         <g fill="none" stroke="var(--accent-gpio)" stroke-width="2.5">
           <path d="M560,510 560,590 515,590 515,630"/>
           <path d="M700,510 700,590 755,590 755,630"/>
-          <path d="M750,420 970,420 970,630"/>
+          <path d="M750,480 970,480 970,630"/>
         </g>
         <text x="410" y="605" font-family="IBM Plex Mono, monospace" font-size="12" fill="var(--accent-gpio)">GPIO IN + GND</text>
         <text x="765" y="605" font-family="IBM Plex Mono, monospace" font-size="12" fill="var(--accent-gpio)">GPIO &times;3 (A / B / SW)</text>
-        <text x="980" y="418" font-family="IBM Plex Mono, monospace" font-size="12" fill="var(--accent-gpio)">GPIO OUT + GND</text>
+        <text x="760" y="468" font-family="IBM Plex Mono, monospace" font-size="12" fill="var(--accent-gpio)">GPIO OUT + GND</text>
 
         <!-- connection dots -->
         <g fill="var(--accent-bus)">
@@ -302,7 +302,7 @@
         <g fill="var(--accent-gpio)">
           <circle cx="560" cy="510" r="3.5"/><circle cx="515" cy="630" r="3.5"/>
           <circle cx="700" cy="510" r="3.5"/><circle cx="755" cy="630" r="3.5"/>
-          <circle cx="750" cy="420" r="3.5"/><circle cx="970" cy="630" r="3.5"/>
+          <circle cx="750" cy="480" r="3.5"/><circle cx="970" cy="630" r="3.5"/>
         </g>
 
         <!-- ============ COMPONENTS ============ -->
