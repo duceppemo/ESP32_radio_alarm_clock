@@ -6,6 +6,12 @@
 #include <Adafruit_VEML7700.h>
 #include <Adafruit_LEDBackpack.h>
 
+#include "AlarmClock.h"
+#include "Config.h"
+#include "MenuSystem.h"
+#include "RadioTuner.h"
+#include "WebDashboard.h"
+
 // Reverse TFT Feather cuts power to the STEMMA QT/I2C bus by default;
 // TFT_I2C_POWER must be driven HIGH before any I2C peripheral will respond.
 Adafruit_ST7789 tft(TFT_CS, TFT_DC, TFT_RST);
@@ -14,15 +20,20 @@ RTC_DS3231 rtc;
 Adafruit_VEML7700 lightSensor;
 Adafruit_7segment sevenSegment = Adafruit_7segment();
 
-// Onboard buttons (Adafruit ESP32-S3 Reverse TFT Feather pinout).
-// D0 shares the boot-strap pin; safe to read as input once past boot.
-static constexpr uint8_t BUTTON_D0 = 0;
-static constexpr uint8_t BUTTON_D1 = 1;
-static constexpr uint8_t BUTTON_D2 = 2;
+AlarmClock alarmClock;
+RadioTuner radioTuner;
+MenuSystem menu(tft, alarmClock, radioTuner);
+WebDashboard dashboard(alarmClock, radioTuner, &rtc);
 
 static bool rtcOk = false;
 static bool lightSensorOk = false;
 static bool sevenSegmentOk = false;
+
+// Cached once a second from the RTC so the menu's per-loop button polling
+// doesn't hit the I2C bus on every iteration. Defaults to the RTClib epoch
+// (2000-01-01 00:00:00) until the first real read, i.e. before the RTC is
+// wired up the clock will just show that placeholder.
+static DateTime cachedNow;
 
 static void reportStatus(const char *label, bool ok) {
   Serial.printf("%-16s %s\n", label, ok ? "OK" : "FAILED");
@@ -34,10 +45,6 @@ void setup() {
 
   pinMode(TFT_I2C_POWER, OUTPUT);
   digitalWrite(TFT_I2C_POWER, HIGH);
-
-  pinMode(BUTTON_D0, INPUT_PULLUP);
-  pinMode(BUTTON_D1, INPUT_PULLUP);
-  pinMode(BUTTON_D2, INPUT_PULLUP);
 
   tft.init(135, 240);
   tft.setRotation(3);
@@ -53,9 +60,12 @@ void setup() {
 
   rtcOk = rtc.begin();
   reportStatus("RTC (DS3231)", rtcOk);
-  if (rtcOk && rtc.lostPower()) {
-    Serial.println("RTC lost power, setting to compile time");
-    rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+  if (rtcOk) {
+    if (rtc.lostPower()) {
+      Serial.println("RTC lost power, setting to compile time");
+      rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+    }
+    cachedNow = rtc.now();
   }
 
   lightSensorOk = lightSensor.begin();
@@ -67,23 +77,35 @@ void setup() {
     sevenSegment.clear();
     sevenSegment.writeDisplay();
   }
+
+  alarmClock.begin();
+  radioTuner.begin();
+  menu.begin();
+  dashboard.begin();
+
+  delay(1000);  // leave the bring-up status readable before the menu takes over
 }
 
 void loop() {
-  static uint32_t lastUpdate = 0;
-  uint32_t now = millis();
-  if (now - lastUpdate < 1000) {
+  // Fast path: keeps menu button response and the web server snappy.
+  dashboard.update();
+  menu.update(cachedNow, dashboard.statusLine());
+
+  static uint32_t lastTickMs = 0;
+  uint32_t nowMs = millis();
+  if (nowMs - lastTickMs < 1000) {
     return;
   }
-  lastUpdate = now;
+  lastTickMs = nowMs;
 
   if (rtcOk) {
-    DateTime t = rtc.now();
-    Serial.printf("%02d:%02d:%02d\n", t.hour(), t.minute(), t.second());
+    cachedNow = rtc.now();
+    alarmClock.update(cachedNow);
+    Serial.printf("%02d:%02d:%02d\n", cachedNow.hour(), cachedNow.minute(), cachedNow.second());
 
-    if (sevenSegmentOk) {
-      sevenSegment.print(t.hour() * 100 + t.minute(), DEC);
-      sevenSegment.drawColon(t.second() % 2 == 0);
+    if (sevenSegmentOk && alarmClock.state() == AlarmState::Idle) {
+      sevenSegment.print(cachedNow.hour() * 100 + cachedNow.minute(), DEC);
+      sevenSegment.drawColon(cachedNow.second() % 2 == 0);
       sevenSegment.writeDisplay();
     }
   }
