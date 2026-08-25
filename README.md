@@ -40,7 +40,7 @@ Off-the-shelf radio alarm clocks are either dumb (no scheduling beyond one or tw
 - **Real battery monitoring** — an onboard fuel-gauge chip (MAX17048), not a voltage-divider guess.
 - **NTP time sync** — corrects the RTC automatically once on WiFi, so it doesn't slowly drift.
 - **On-device menu** — full control from the built-in color TFT and three buttons, no phone required.
-- **Snooze + sleep timer** — a dedicated front panel button, plus an auto-off timer for falling asleep to the radio.
+- **One button, two jobs** — the snooze button snoozes a ringing alarm; press it while just listening to the radio and it instead starts (or cancels) a sleep timer, shown with a live countdown on the TFT.
 
 ## Hardware
 
@@ -74,7 +74,7 @@ See [`docs/wiring-diagram.html`](docs/wiring-diagram.html) for wiring notes/assu
 
 A PlatformIO project targeting the ESP32-S3 via the [pioarduino](https://github.com/pioarduino/platform-espressif32) platform fork. Covers alarm scheduling (sunrise ramp + dead-air fallback), FM radio control, an on-device TFT menu, battery monitoring, NTP time sync, OTA updates, and the WiFi setup/status web dashboard.
 
-It builds clean and its hardware-independent logic (alarm scheduling, radio wrapper, wake orchestration, on-device menu) has 34 passing unit tests that run on every push — see the CI badge above — but it hasn't been flashed to real hardware yet, since none of the parts have arrived. See [`docs/firmware.md`](docs/firmware.md) for the module architecture, build/flash instructions, the dashboard's API, and current known gaps.
+It builds clean and its hardware-independent logic (alarm scheduling, radio wrapper, wake orchestration, on-device menu, the snooze button's dual behavior) has 39 passing unit tests that run on every push — see the CI badge above — but it hasn't been flashed to real hardware yet, since none of the parts have arrived. See [`docs/firmware.md`](docs/firmware.md) for the module architecture, build/flash instructions, the dashboard's API, and current known gaps.
 
 ## Getting started
 
@@ -91,14 +91,13 @@ It builds clean and its hardware-independent logic (alarm scheduling, radio wrap
 
 ## Controls
 
-- **Snooze**: dedicated panel-mount tactile button, front-mounted for easy reach, wired separately from the Feather's onboard top-mounted menu buttons.
+- **Snooze**: dedicated panel-mount tactile button, front-mounted for easy reach, wired separately from the Feather's onboard top-mounted menu buttons. Dual behavior: while an alarm is ringing/snoozed, it snoozes it; otherwise, if the radio is on, it toggles a sleep timer instead (default 30 min), shown with a live countdown on the TFT's Home screen.
 - **Volume**: two low-profile panel-mount tactile buttons (Vol+/Vol−) — flush with the enclosure, no protruding knob.
 - **Power**: inline SPDT slide switch on the battery line for a hard on/off.
 - **Menu**: more advanced settings/controls are handled via an on-screen menu on the Feather's built-in TFT, navigated using the Feather's onboard buttons.
 
 ## Roadmap
 
-- **Physical snooze input**: the dedicated snooze button has a pin reserved but isn't polled by firmware yet. (Volume is done — see [Controls](#controls).)
 - **Auto-dimming**: use the VEML7700 ambient light reading to dim the 7-segment and TFT displays automatically.
 
 ## Enclosure

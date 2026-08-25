@@ -17,7 +17,7 @@ Run these from PowerShell, not Git Bash. Git Bash's MSYS-style environment fails
 
 ## Testing
 
-Four modules' logic has real unit tests that run on the host machine — no ESP32 hardware needed:
+Five modules' logic has real unit tests that run on the host machine — no ESP32 hardware needed:
 
 ```powershell
 pio test -e native
@@ -30,6 +30,7 @@ This needs a native C/C++ toolchain (MinGW-w64, via `winget install BrechtSander
 | `test/test_alarm_clock/` | Day-of-week mask matching, ringing/snoozed state transitions, snooze timing, the dedup-within-a-minute guard, persistence across instances. |
 | `test/test_radio_tuner/` | FM-band clamping, volume clamping, the transient-vs-persisted volume setter, preset store/recall, sleep timer expiry and its remaining-minutes math, persistence across instances. |
 | `test/test_wake_controller/` | The sunrise volume ramp's math, the dead-air RSSI fallback (and that it does *not* fire with a good signal), beep/chime wake sources muting the radio and starting the right tone immediately, what dismissing/snoozing does and doesn't restore. |
+| `test/test_snooze_controller/` | The physical snooze button's dual behavior: snoozes a ringing/snoozed alarm (and doesn't also touch the radio's sleep timer while doing so), otherwise toggles the radio's sleep timer on/off if the radio is on, and does nothing if the radio's off. |
 | `test/test_menu_system/` | The button-driven screen/state machine, end to end: short/long press, field-by-field alarm editing (including discarding on cancel), Radio-screen tune/mute, the ringing-alarm snooze/dismiss shortcut on Home. Since `MenuSystem`'s screen/cursor state is private by design, these drive full interaction sequences via simulated button presses and assert on the resulting `AlarmClock`/`RadioTuner` state, the same way a real user's presses would. |
 
 The `[env:native]` build only compiles the `src/*.cpp` files listed in `build_src_filter` — `WebDashboard` isn't among them and isn't covered: it depends on `ESPAsyncWebServer`/`WiFi`/`ESPmDNS`, and its actual logic is mostly JSON marshaling coupled directly to request/response objects, so faking that stack well enough to test route handlers would be a much bigger, more fragile undertaking for comparatively little payoff versus the other modules here.
@@ -52,9 +53,10 @@ The `[env:native]` build only compiles the `src/*.cpp` files listed in `build_sr
 | [`src/AlarmSound.*`](../src/AlarmSound.h) | Drives a piezo buzzer on `Pins::Buzzer` via Arduino's `tone()`/`noTone()`, stepping through a small pattern table: an urgent 1.8/2.2kHz alternating beep, or a gentler ascending A-major-triad chime (A5→C♯6→E6). Used both as a selectable wake sound and as the dead-air fallback below. Entirely unrelated to the radio's audio path. |
 | [`src/BatteryMonitor.*`](../src/BatteryMonitor.h) | Wraps the onboard MAX17048 LiPoly fuel gauge (I2C, address 0x36) for voltage/percent/low-battery. |
 | [`src/WakeController.*`](../src/WakeController.h) | Pure orchestration, owns nothing: watches `AlarmClock`'s state and, per the ringing alarm's `WakeSource`, either ramps `RadioTuner`'s volume up over `AlarmConfig::WakeRampSeconds` (falling back to `AlarmSound` if the station turns out to be dead air) or plays the selected tone directly. |
-| [`src/MenuSystem.*`](../src/MenuSystem.h) | Debounced short/long-press handling for the three onboard buttons (D0/D1/D2) drives a Home / Alarms / Alarm-edit / Radio / WiFi-info screen state machine on the built-in TFT. Short press selects/confirms, long press backs out a level; on Home while an alarm is ringing, the same two gestures snooze/dismiss it. Shows battery percent on Home and the sleep timer on the Radio screen when available. |
+| [`src/SnoozeController.*`](../src/SnoozeController.h) | Pure orchestration, owns nothing: the physical snooze button (`Pins::SnoozeButton`) does different things depending on context — snoozes a ringing/snoozed alarm, or (if idle and the radio is on) toggles `RadioTuner`'s sleep timer on/off at `RadioConfig::DefaultSleepTimerMinutes`. Does nothing if idle and the radio's off/muted. |
+| [`src/MenuSystem.*`](../src/MenuSystem.h) | Debounced short/long-press handling for the three onboard buttons (D0/D1/D2) drives a Home / Alarms / Alarm-edit / Radio / WiFi-info screen state machine on the built-in TFT. Short press selects/confirms, long press backs out a level; on Home while an alarm is ringing, the same two gestures snooze/dismiss it. Shows battery percent and (when active) the sleep timer's live countdown on Home, and the sleep timer on the Radio screen too. |
 | [`src/WebDashboard.*`](../src/WebDashboard.h) + [`src/DashboardPage.h`](../src/DashboardPage.h) | Implements the web dashboard described below. |
-| [`src/main.cpp`](../src/main.cpp) | Owns one instance of each module. `MenuSystem::update()`, `WebDashboard::update()`, and `WakeController::tickFast()` (keeps a playing tone fed) run every `loop()` iteration; RTC reads, alarm evaluation, `RadioTuner::update()` (sleep timer expiry), and `WakeController::tickSlow()` are throttled to 1 Hz to limit I2C traffic. |
+| [`src/main.cpp`](../src/main.cpp) | Owns one instance of each module, plus a `DebouncedButton` each for the snooze and two volume buttons. `MenuSystem::update()`, `WebDashboard::update()`, `WakeController::tickFast()` (keeps a playing tone fed), and all three panel buttons run every `loop()` iteration for responsiveness; RTC reads, alarm evaluation, `RadioTuner::update()` (sleep timer expiry), and `WakeController::tickSlow()` are throttled to 1 Hz to limit I2C traffic. |
 
 ## Web dashboard
 
@@ -88,7 +90,7 @@ Each alarm picks a `WakeSource`: **Radio** ramps `RadioTuner`'s volume from `Ala
 
 ## Known gaps
 
-- The physical snooze button and VEML7700-driven display auto-dimming have pins reserved in `Config.h` but no polling/handling code yet. (Volume is handled — `Pins::VolumeUp`/`VolumeDown`, polled in `main.cpp`'s loop().)
+- VEML7700-driven display auto-dimming has a working driver (`BatteryMonitor`-style bring-up check) but nothing actually dims the TFT/7-segment displays from its readings yet.
 - The `Config.h` pin assignments (including the buzzer) and the SI4735 reset-pin timing are unverified against real wiring.
 - The dead-air RSSI threshold (`AlarmConfig::DeadAirRssiThreshold`) is a guess and will need retuning once there's a real signal to measure.
 - The buzzer tone frequencies/pattern (`AlarmSound.cpp`) are a best guess at what sounds good on a typical passive piezo — worth listening to and retuning once hardware exists.
