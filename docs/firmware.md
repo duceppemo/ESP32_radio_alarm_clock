@@ -6,13 +6,12 @@ As of this writing the firmware has not been flashed to real hardware — none o
 
 ## Build & flash
 
+```powershell
+pio run                              # build
+pio run -t upload                    # flash over the board's default port
+pio run -t upload --upload-port COM5 # flash a specific port
+pio run -t upload -t monitor         # flash, then open the serial monitor
 ```
-pio run                    # build
-pio run -t upload          # flash
-pio run -t upload -t monitor
-```
-
-On Windows, run PlatformIO commands from **PowerShell**, not Git Bash. Git Bash's MSYS-style environment fails to resolve the `xtensa-esp32s3-elf-g++` toolchain PlatformIO installs, even though the same commands work immediately in PowerShell.
 
 ## Modules
 
