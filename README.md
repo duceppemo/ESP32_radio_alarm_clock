@@ -27,7 +27,7 @@ Rendered from [`docs/wiring-diagram.html`](docs/wiring-diagram.html), which has 
 
 ## Firmware
 
-PlatformIO project targeting the ESP32-S3 via the [pioarduino](https://github.com/pioarduino/platform-espressif32) platform fork. Covers alarm scheduling, FM radio control, an on-device TFT menu, and a WiFi setup/status web dashboard — see [`docs/firmware.md`](docs/firmware.md) for architecture, build instructions, and the dashboard's API. Not yet flashed to real hardware.
+PlatformIO project targeting the ESP32-S3 via the [pioarduino](https://github.com/pioarduino/platform-espressif32) platform fork. Covers alarm scheduling (with a sunrise volume ramp and a dead-air fallback tone), FM radio control, an on-device TFT menu, battery monitoring, NTP time sync, OTA firmware updates, and a WiFi setup/status web dashboard — see [`docs/firmware.md`](docs/firmware.md) for architecture, build instructions, and the dashboard's API. Not yet flashed to real hardware.
 
 ## Controls
 
