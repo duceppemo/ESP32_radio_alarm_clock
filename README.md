@@ -25,3 +25,7 @@
 - **Volume**: small panel-mount rotary encoder for physical volume control.
 - **Power**: inline SPDT slide switch on the battery line for a hard on/off.
 
+## Enclosure
+
+A 3D-printed case will be designed to house all components in the final form factor. CAD/STL files will live under [`enclosure/`](enclosure/).
+
