@@ -16,7 +16,10 @@ class RadioTuner {
   void seekUp();
   void seekDown();
 
-  void setVolume(uint8_t volume);  // 0-63
+  void setVolume(uint8_t volume);  // 0-63, persisted
+  // Sets the volume without writing to flash -- for the sunrise ramp, which
+  // would otherwise hit NVS every second.
+  void setVolumeTransient(uint8_t volume);
   uint8_t volume() const { return volume_; }
   void volumeUp();
   void volumeDown();
@@ -33,7 +36,16 @@ class RadioTuner {
   void storePreset(uint8_t index, uint16_t frequency10kHz);
   void recallPreset(uint8_t index);
 
+  // Sleep timer: mutes automatically once it elapses. update() must be
+  // called periodically (main.cpp does this on the 1 Hz tick) to expire it.
+  void setSleepTimer(uint16_t minutes);
+  void cancelSleepTimer();
+  bool sleepTimerActive() const { return sleepTimerEndMs_ != 0; }
+  uint16_t sleepTimerRemainingMinutes() const;
+  void update();
+
  private:
+  void applyVolume(uint8_t volume);
   void save();
   void load();
 
@@ -41,4 +53,5 @@ class RadioTuner {
   uint8_t volume_ = RadioConfig::DefaultVolume;
   bool muted_ = false;
   uint16_t presets_[RadioConfig::MaxPresets] = {};
+  uint32_t sleepTimerEndMs_ = 0;  // 0 = inactive
 };

@@ -37,9 +37,15 @@ void RadioTuner::seekUp() { si4735_.seekStationUp(); }
 void RadioTuner::seekDown() { si4735_.seekStationDown(); }
 
 void RadioTuner::setVolume(uint8_t volume) {
+  applyVolume(volume);
+  save();
+}
+
+void RadioTuner::setVolumeTransient(uint8_t volume) { applyVolume(volume); }
+
+void RadioTuner::applyVolume(uint8_t volume) {
   volume_ = min<uint8_t>(volume, 63);
   si4735_.setVolume(volume_);
-  save();
 }
 
 void RadioTuner::volumeUp() { setVolume(min<uint8_t>(volume_ + 1, 63)); }
@@ -68,6 +74,27 @@ void RadioTuner::storePreset(uint8_t index, uint16_t frequency10kHz) {
 void RadioTuner::recallPreset(uint8_t index) {
   if (index >= presetCount() || presets_[index] == 0) return;
   tune(presets_[index]);
+}
+
+void RadioTuner::setSleepTimer(uint16_t minutes) {
+  minutes = min(minutes, RadioConfig::MaxSleepTimerMinutes);
+  sleepTimerEndMs_ = millis() + (uint32_t)minutes * 60000UL;
+}
+
+void RadioTuner::cancelSleepTimer() { sleepTimerEndMs_ = 0; }
+
+uint16_t RadioTuner::sleepTimerRemainingMinutes() const {
+  if (sleepTimerEndMs_ == 0) return 0;
+  uint32_t nowMs = millis();
+  if (nowMs >= sleepTimerEndMs_) return 0;
+  return (sleepTimerEndMs_ - nowMs) / 60000UL + 1;
+}
+
+void RadioTuner::update() {
+  if (sleepTimerEndMs_ != 0 && millis() >= sleepTimerEndMs_) {
+    setMuted(true);
+    sleepTimerEndMs_ = 0;
+  }
 }
 
 void RadioTuner::save() {
