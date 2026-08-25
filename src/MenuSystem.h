@@ -5,6 +5,7 @@
 #include <RTClib.h>
 
 #include "AlarmClock.h"
+#include "BatteryMonitor.h"
 #include "Config.h"
 #include "RadioTuner.h"
 
@@ -47,7 +48,7 @@ enum class MenuScreen { Home, AlarmList, AlarmEdit, Radio, WifiInfo };
 // selects/confirms (short press) or backs out a level (long press).
 class MenuSystem {
  public:
-  MenuSystem(Adafruit_ST7789 &tft, AlarmClock &alarms, RadioTuner &radio);
+  MenuSystem(Adafruit_ST7789 &tft, AlarmClock &alarms, RadioTuner &radio, BatteryMonitor *battery);
 
   void begin();
   // now: current time for the Home screen and alarm status; wifiStatusLine
@@ -67,6 +68,7 @@ class MenuSystem {
   Adafruit_ST7789 &tft_;
   AlarmClock &alarms_;
   RadioTuner &radio_;
+  BatteryMonitor *battery_;
 
   DebouncedButton select_{Pins::MenuSelect};
   DebouncedButton up_{Pins::MenuUp};
@@ -75,7 +77,7 @@ class MenuSystem {
   MenuScreen screen_ = MenuScreen::Home;
   // Home: index into {AlarmList, Radio, WifiInfo}. AlarmList: alarm index.
   uint8_t cursor_ = 0;
-  uint8_t editField_ = 0;  // which row is selected in AlarmEdit (0-4)
+  uint8_t editField_ = 0;  // which row is selected in AlarmEdit (0-5)
   Alarm editingAlarm_;     // working copy while in AlarmEdit, until saved
   bool dirty_ = true;      // forces a redraw on the next update()
 

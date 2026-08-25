@@ -23,11 +23,28 @@ uint8_t cycleDays(uint8_t mask, int8_t direction) {
   return presets[index];
 }
 
+const char *wakeSourceLabel(WakeSource source) {
+  switch (source) {
+    case WakeSource::ClassicBeep:
+      return "Beep";
+    case WakeSource::Chime:
+      return "Chime";
+    default:
+      return "Radio";
+  }
+}
+
+WakeSource cycleWakeSource(WakeSource source, int8_t direction) {
+  int8_t next = (static_cast<int8_t>(source) + direction + 3) % 3;
+  return static_cast<WakeSource>(next);
+}
+
 constexpr uint8_t kHomeMenuItems = 3;  // AlarmList, Radio, WifiInfo
 }  // namespace
 
-MenuSystem::MenuSystem(Adafruit_ST7789 &tft, AlarmClock &alarms, RadioTuner &radio)
-    : tft_(tft), alarms_(alarms), radio_(radio) {}
+MenuSystem::MenuSystem(Adafruit_ST7789 &tft, AlarmClock &alarms, RadioTuner &radio,
+                       BatteryMonitor *battery)
+    : tft_(tft), alarms_(alarms), radio_(radio), battery_(battery) {}
 
 void MenuSystem::begin() {
   pinMode(Pins::MenuSelect, INPUT_PULLUP);
@@ -120,10 +137,13 @@ void MenuSystem::handleInput(const DateTime &now) {
           case 3:
             editingAlarm_.daysMask = cycleDays(editingAlarm_.daysMask, dir);
             break;
+          case 4:
+            editingAlarm_.wakeSource = cycleWakeSource(editingAlarm_.wakeSource, dir);
+            break;
         }
       }
       if (shortPress) {
-        if (editField_ >= 4) {
+        if (editField_ >= 5) {
           alarms_.setAlarm(cursor_, editingAlarm_);
           screen_ = MenuScreen::AlarmList;
         } else {
@@ -209,6 +229,11 @@ void MenuSystem::renderHome(const DateTime &now) {
   }
   tft_.println(anyEnabled ? "Alarms set" : "No alarms set");
   tft_.printf("FM %.1f MHz\n", radio_.frequencyMHz());
+  if (battery_ && battery_->available()) {
+    if (battery_->isLow()) tft_.setTextColor(ST77XX_RED);
+    tft_.printf("Battery: %.0f%%\n", battery_->percent());
+    tft_.setTextColor(ST77XX_WHITE);
+  }
   tft_.println();
 
   static const char *items[kHomeMenuItems] = {"Alarms", "Radio", "WiFi"};
@@ -233,8 +258,8 @@ void MenuSystem::renderAlarmList() {
 void MenuSystem::renderAlarmEdit() {
   tft_.printf("Edit alarm %u\n\n", cursor_ + 1);
 
-  static const char *rows[] = {"Enabled", "Hour", "Minute", "Days", "Save"};
-  for (uint8_t i = 0; i < 5; i++) {
+  static const char *rows[] = {"Enabled", "Hour", "Minute", "Days", "Wake", "Save"};
+  for (uint8_t i = 0; i < 6; i++) {
     tft_.print(i == editField_ ? "> " : "  ");
     tft_.print(rows[i]);
     switch (i) {
@@ -250,6 +275,10 @@ void MenuSystem::renderAlarmEdit() {
       case 3:
         tft_.print(": ");
         tft_.println(daysLabel(editingAlarm_.daysMask));
+        break;
+      case 4:
+        tft_.print(": ");
+        tft_.println(wakeSourceLabel(editingAlarm_.wakeSource));
         break;
       default:
         tft_.println();
@@ -269,6 +298,9 @@ void MenuSystem::renderRadio() {
   tft_.printf("Signal: %u\n", radio_.rssi());
   tft_.printf("Volume: %u\n", radio_.volume());
   tft_.println(radio_.muted() ? "Muted" : "Unmuted");
+  if (radio_.sleepTimerActive()) {
+    tft_.printf("Sleep: %um\n", radio_.sleepTimerRemainingMinutes());
+  }
   tft_.println();
   tft_.println("up/down: tune");
   tft_.println("tap: mute  hold: back");
