@@ -13,6 +13,8 @@ pio run -t upload --upload-port COM5 # flash a specific port
 pio run -t upload -t monitor         # flash, then open the serial monitor
 ```
 
+Run these from PowerShell, not Git Bash. Git Bash's MSYS-style environment fails to resolve the `xtensa-esp32s3-elf-g++` toolchain PlatformIO installs, even though the same commands work immediately in PowerShell.
+
 ## Modules
 
 | File | Responsibility |
