@@ -7,9 +7,12 @@
 #include <Adafruit_LEDBackpack.h>
 
 #include "AlarmClock.h"
+#include "AlarmSound.h"
+#include "BatteryMonitor.h"
 #include "Config.h"
 #include "MenuSystem.h"
 #include "RadioTuner.h"
+#include "WakeController.h"
 #include "WebDashboard.h"
 
 // Reverse TFT Feather cuts power to the STEMMA QT/I2C bus by default;
@@ -19,11 +22,14 @@ Adafruit_ST7789 tft(TFT_CS, TFT_DC, TFT_RST);
 RTC_DS3231 rtc;
 Adafruit_VEML7700 lightSensor;
 Adafruit_7segment sevenSegment = Adafruit_7segment();
+BatteryMonitor battery;
 
 AlarmClock alarmClock;
 RadioTuner radioTuner;
-MenuSystem menu(tft, alarmClock, radioTuner);
-WebDashboard dashboard(alarmClock, radioTuner, &rtc);
+AlarmSound alarmSound;
+WakeController wakeController(alarmClock, radioTuner, alarmSound);
+MenuSystem menu(tft, alarmClock, radioTuner, &battery);
+WebDashboard dashboard(alarmClock, radioTuner, &rtc, &battery);
 
 static bool rtcOk = false;
 static bool lightSensorOk = false;
@@ -78,18 +84,23 @@ void setup() {
     sevenSegment.writeDisplay();
   }
 
+  reportStatus("Battery (MAX17048)", battery.begin());
+  reportStatus("Alarm tone (I2S)", alarmSound.begin());
+
   alarmClock.begin();
   radioTuner.begin();
   menu.begin();
-  dashboard.begin();
+  dashboard.begin();  // may take a few seconds: WiFi connect attempt + NTP sync
 
   delay(1000);  // leave the bring-up status readable before the menu takes over
 }
 
 void loop() {
-  // Fast path: keeps menu button response and the web server snappy.
+  // Fast path: keeps menu button response, the web server, and any playing
+  // alarm tone snappy.
   dashboard.update();
   menu.update(cachedNow, dashboard.statusLine());
+  wakeController.tickFast();
 
   static uint32_t lastTickMs = 0;
   uint32_t nowMs = millis();
@@ -98,9 +109,12 @@ void loop() {
   }
   lastTickMs = nowMs;
 
+  radioTuner.update();  // expires the sleep timer
+
   if (rtcOk) {
     cachedNow = rtc.now();
     alarmClock.update(cachedNow);
+    wakeController.tickSlow(cachedNow);
     Serial.printf("%02d:%02d:%02d\n", cachedNow.hour(), cachedNow.minute(), cachedNow.second());
 
     if (sevenSegmentOk && alarmClock.state() == AlarmState::Idle) {
