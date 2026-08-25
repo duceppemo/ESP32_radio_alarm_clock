@@ -14,6 +14,7 @@
 #include "MenuSystem.h"
 #include "RadioTuner.h"
 #include "SnoozeController.h"
+#include "TimezoneStore.h"
 #include "WakeController.h"
 #include "WebDashboard.h"
 
@@ -25,14 +26,15 @@ RTC_DS3231 rtc;
 Adafruit_VEML7700 lightSensor;
 Adafruit_7segment sevenSegment = Adafruit_7segment();
 BatteryMonitor battery;
+TimezoneStore timezoneStore;
 
 AlarmClock alarmClock;
 RadioTuner radioTuner;
 AlarmSound alarmSound;
 WakeController wakeController(alarmClock, radioTuner, alarmSound);
 SnoozeController snoozeController(alarmClock, radioTuner);
-MenuSystem menu(tft, alarmClock, radioTuner, &battery, &rtc);
-WebDashboard dashboard(alarmClock, radioTuner, &rtc, &battery);
+MenuSystem menu(tft, alarmClock, radioTuner, &battery, &rtc, timezoneStore);
+WebDashboard dashboard(alarmClock, radioTuner, &rtc, &battery, timezoneStore);
 
 DebouncedButton volumeUpButton(Pins::VolumeUp);
 DebouncedButton volumeDownButton(Pins::VolumeDown);
@@ -93,6 +95,7 @@ void setup() {
 
   reportStatus("Battery (MAX17048)", battery.begin());
   reportStatus("Alarm tone (buzzer)", alarmSound.begin());
+  timezoneStore.begin();
 
   pinMode(Pins::VolumeUp, INPUT_PULLUP);
   pinMode(Pins::VolumeDown, INPUT_PULLUP);

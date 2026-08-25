@@ -7,6 +7,7 @@
 #include "BatteryMonitor.h"
 #include "Config.h"
 #include "RadioTuner.h"
+#include "TimezoneStore.h"
 
 // Hosts the setup/status web dashboard described in the README's "Planned
 // Features": AP-mode WiFi provisioning on first boot, then a normal
@@ -14,11 +15,14 @@
 // has joined the home network. rtc/battery may be null (features degrade
 // gracefully) until that hardware is wired up.
 //
-// Once on the home network it also syncs the RTC from NTP (re-synced daily)
-// and exposes an OTA firmware-update page at /update via ElegantOTA.
+// Once on the home network it also syncs the RTC from NTP (re-synced daily,
+// using timezone's currently-selected POSIX TZ string for the UTC->local
+// conversion) and exposes an OTA firmware-update page at /update via
+// ElegantOTA.
 class WebDashboard {
  public:
-  WebDashboard(AlarmClock &alarms, RadioTuner &radio, RTC_DS3231 *rtc, BatteryMonitor *battery);
+  WebDashboard(AlarmClock &alarms, RadioTuner &radio, RTC_DS3231 *rtc, BatteryMonitor *battery,
+               TimezoneStore &timezone);
 
   void begin();
   // Call every loop iteration: services a queued restart after a WiFi
@@ -38,6 +42,7 @@ class WebDashboard {
   String buildAlarmsJson();
   String buildRadioJson();
   String buildSettingsJson();
+  String buildTimezoneJson();
   bool applySettingsJson(JsonVariantConst doc);
   static void loadWifiCredentials(String &ssid, String &password);
   static void saveWifiCredentials(const String &ssid, const String &password);
@@ -47,6 +52,7 @@ class WebDashboard {
   RadioTuner &radio_;
   RTC_DS3231 *rtc_;
   BatteryMonitor *battery_;
+  TimezoneStore &timezone_;
 
   bool apMode_ = true;
   String staSsid_;

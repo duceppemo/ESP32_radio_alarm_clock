@@ -63,10 +63,9 @@ constexpr const char *ApSsid = "AlarmClock-Setup";
 constexpr const char *MdnsHostname = "alarmclock";
 constexpr uint32_t StaConnectTimeoutMs = 15000;
 
-// NTP keeps the DS3231 accurate; POSIX TZ string, adjust to your locale
-// (reference: https://github.com/nayarsystems/posix_tz_db).
+// NTP keeps the DS3231 accurate. Timezone (including DST rule, where
+// applicable) is a user setting -- see TimezoneStore -- not hardcoded here.
 constexpr const char *NtpServer = "pool.ntp.org";
-constexpr const char *PosixTimezone = "UTC0";
 constexpr uint32_t NtpResyncIntervalMs = 24UL * 60 * 60 * 1000;
 }  // namespace NetConfig
 

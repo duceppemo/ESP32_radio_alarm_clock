@@ -9,8 +9,9 @@
 #include "Config.h"
 #include "DebouncedButton.h"
 #include "RadioTuner.h"
+#include "TimezoneStore.h"
 
-enum class MenuScreen { Home, AlarmList, AlarmEdit, Radio, WifiInfo, SetTime };
+enum class MenuScreen { Home, AlarmList, AlarmEdit, Radio, WifiInfo, SetTime, Timezone };
 
 // Renders the on-device menu to the built-in TFT and drives it from the
 // three onboard buttons: D1/D2 move the cursor or adjust a value, D0
@@ -20,7 +21,7 @@ class MenuSystem {
   // rtc may be null (e.g. before the RTC is wired up) -- the Set Time
   // screen still displays but saving silently does nothing.
   MenuSystem(Adafruit_ST7789 &tft, AlarmClock &alarms, RadioTuner &radio, BatteryMonitor *battery,
-             RTC_DS3231 *rtc);
+             RTC_DS3231 *rtc, TimezoneStore &timezone);
 
   void begin();
   // now: current time for the Home screen and alarm status; wifiStatusLine
@@ -37,20 +38,22 @@ class MenuSystem {
   void renderRadio();
   void renderWifiInfo(const String &wifiStatusLine);
   void renderSetTime();
+  void renderTimezone();
 
   Adafruit_ST7789 &tft_;
   AlarmClock &alarms_;
   RadioTuner &radio_;
   BatteryMonitor *battery_;
   RTC_DS3231 *rtc_;
+  TimezoneStore &timezone_;
 
   DebouncedButton select_{Pins::MenuSelect};
   DebouncedButton up_{Pins::MenuUp};
   DebouncedButton down_{Pins::MenuDown};
 
   MenuScreen screen_ = MenuScreen::Home;
-  // Home: index into {AlarmList, Radio, WifiInfo, SetTime}. AlarmList: alarm
-  // index.
+  // Home: index into {AlarmList, Radio, WifiInfo, SetTime, Timezone}.
+  // AlarmList: alarm index.
   uint8_t cursor_ = 0;
   // Which row is selected: AlarmEdit (0-5) and SetTime (0-2) both reuse this,
   // since the two screens are never active at the same time.

@@ -6,6 +6,7 @@
 #include "Preferences.h"
 #include "RadioTuner.h"
 #include "SI4735.h"
+#include "TimezoneStore.h"
 
 void setUp() {
   Preferences::resetAll();
@@ -47,7 +48,9 @@ void test_toggling_an_alarm_enabled_through_the_full_edit_flow() {
   RadioTuner radio;
   radio.begin();
   Adafruit_ST7789 tft(0, 0, 0);
-  MenuSystem menu(tft, alarms, radio, nullptr, nullptr);
+  TimezoneStore timezone;
+  timezone.begin();
+  MenuSystem menu(tft, alarms, radio, nullptr, nullptr, timezone);
   menu.begin();
 
   TEST_ASSERT_FALSE(alarms.alarm(0).enabled);
@@ -69,7 +72,9 @@ void test_editing_hour_and_minute_then_saving() {
   RadioTuner radio;
   radio.begin();
   Adafruit_ST7789 tft(0, 0, 0);
-  MenuSystem menu(tft, alarms, radio, nullptr, nullptr);
+  TimezoneStore timezone;
+  timezone.begin();
+  MenuSystem menu(tft, alarms, radio, nullptr, nullptr, timezone);
   menu.begin();
 
   tap(Pins::MenuSelect, menu);  // Home -> AlarmList
@@ -95,7 +100,9 @@ void test_cancelling_an_edit_with_long_press_discards_changes() {
   RadioTuner radio;
   radio.begin();
   Adafruit_ST7789 tft(0, 0, 0);
-  MenuSystem menu(tft, alarms, radio, nullptr, nullptr);
+  TimezoneStore timezone;
+  timezone.begin();
+  MenuSystem menu(tft, alarms, radio, nullptr, nullptr, timezone);
   menu.begin();
 
   tap(Pins::MenuSelect, menu);   // Home -> AlarmList
@@ -113,7 +120,9 @@ void test_radio_screen_tune_up_and_mute() {
   radio.begin();
   uint16_t startFreq = radio.frequency10kHz();
   Adafruit_ST7789 tft(0, 0, 0);
-  MenuSystem menu(tft, alarms, radio, nullptr, nullptr);
+  TimezoneStore timezone;
+  timezone.begin();
+  MenuSystem menu(tft, alarms, radio, nullptr, nullptr, timezone);
   menu.begin();
 
   tap(Pins::MenuDown, menu);    // Home cursor: Alarms(0) -> Radio(1)
@@ -133,7 +142,9 @@ void test_ringing_alarm_short_press_snoozes() {
   RadioTuner radio;
   radio.begin();
   Adafruit_ST7789 tft(0, 0, 0);
-  MenuSystem menu(tft, alarms, radio, nullptr, nullptr);
+  TimezoneStore timezone;
+  timezone.begin();
+  MenuSystem menu(tft, alarms, radio, nullptr, nullptr, timezone);
   menu.begin();
 
   Alarm a;
@@ -156,7 +167,9 @@ void test_ringing_alarm_long_press_dismisses() {
   RadioTuner radio;
   radio.begin();
   Adafruit_ST7789 tft(0, 0, 0);
-  MenuSystem menu(tft, alarms, radio, nullptr, nullptr);
+  TimezoneStore timezone;
+  timezone.begin();
+  MenuSystem menu(tft, alarms, radio, nullptr, nullptr, timezone);
   menu.begin();
 
   Alarm a;
@@ -180,7 +193,9 @@ void test_set_time_saves_the_new_hour_and_minute() {
   RTC_DS3231 rtc;
   rtc.adjust(kNow);
   Adafruit_ST7789 tft(0, 0, 0);
-  MenuSystem menu(tft, alarms, radio, nullptr, &rtc);
+  TimezoneStore timezone;
+  timezone.begin();
+  MenuSystem menu(tft, alarms, radio, nullptr, &rtc, timezone);
   menu.begin();
 
   tap(Pins::MenuDown, menu);    // Home cursor: Alarms(0) -> Radio(1)
@@ -213,7 +228,9 @@ void test_set_time_cancelled_with_long_press_does_not_save() {
   RTC_DS3231 rtc;
   rtc.adjust(kNow);
   Adafruit_ST7789 tft(0, 0, 0);
-  MenuSystem menu(tft, alarms, radio, nullptr, &rtc);
+  TimezoneStore timezone;
+  timezone.begin();
+  MenuSystem menu(tft, alarms, radio, nullptr, &rtc, timezone);
   menu.begin();
 
   tap(Pins::MenuDown, menu);
@@ -232,7 +249,9 @@ void test_set_time_with_no_rtc_does_not_crash() {
   RadioTuner radio;
   radio.begin();
   Adafruit_ST7789 tft(0, 0, 0);
-  MenuSystem menu(tft, alarms, radio, nullptr, nullptr);
+  TimezoneStore timezone;
+  timezone.begin();
+  MenuSystem menu(tft, alarms, radio, nullptr, nullptr, timezone);
   menu.begin();
 
   tap(Pins::MenuDown, menu);
@@ -244,6 +263,36 @@ void test_set_time_with_no_rtc_does_not_crash() {
   tap(Pins::MenuSelect, menu);  // commit with a null rtc_ -- must not crash
 
   TEST_ASSERT_TRUE(true);  // reaching here without crashing is the assertion
+}
+
+void test_timezone_screen_cycles_selection() {
+  AlarmClock alarms;
+  alarms.begin();
+  RadioTuner radio;
+  radio.begin();
+  Adafruit_ST7789 tft(0, 0, 0);
+  TimezoneStore timezone;
+  timezone.begin();
+  MenuSystem menu(tft, alarms, radio, nullptr, nullptr, timezone);
+  menu.begin();
+
+  TEST_ASSERT_EQUAL(0, timezone.index());  // UTC by default
+
+  tap(Pins::MenuDown, menu);  // Home cursor: Alarms(0) -> Radio(1)
+  tap(Pins::MenuDown, menu);  // Radio(1) -> WiFi(2)
+  tap(Pins::MenuDown, menu);  // WiFi(2) -> Time(3)
+  tap(Pins::MenuDown, menu);  // Time(3) -> TZ(4)
+  tap(Pins::MenuSelect, menu);  // enter Timezone screen
+
+  tap(Pins::MenuUp, menu);
+  tap(Pins::MenuUp, menu);
+  TEST_ASSERT_EQUAL(2, timezone.index());
+
+  tap(Pins::MenuDown, menu);
+  TEST_ASSERT_EQUAL(1, timezone.index());
+
+  hold(Pins::MenuSelect, menu);  // back to Home -- selection stays as left
+  TEST_ASSERT_EQUAL(1, timezone.index());
 }
 
 int main(int argc, char **argv) {
@@ -259,5 +308,6 @@ int main(int argc, char **argv) {
   RUN_TEST(test_set_time_saves_the_new_hour_and_minute);
   RUN_TEST(test_set_time_cancelled_with_long_press_does_not_save);
   RUN_TEST(test_set_time_with_no_rtc_does_not_crash);
+  RUN_TEST(test_timezone_screen_cycles_selection);
   return UNITY_END();
 }

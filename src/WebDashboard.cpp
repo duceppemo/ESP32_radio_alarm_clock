@@ -44,8 +44,8 @@ WakeSource wakeSourceFromName(const String &name) {
 }  // namespace
 
 WebDashboard::WebDashboard(AlarmClock &alarms, RadioTuner &radio, RTC_DS3231 *rtc,
-                           BatteryMonitor *battery)
-    : alarms_(alarms), radio_(radio), rtc_(rtc), battery_(battery) {}
+                           BatteryMonitor *battery, TimezoneStore &timezone)
+    : alarms_(alarms), radio_(radio), rtc_(rtc), battery_(battery), timezone_(timezone) {}
 
 void WebDashboard::begin() {
   String ssid, password;
@@ -109,7 +109,7 @@ void WebDashboard::syncTimeFromNtp() {
   lastNtpSyncMs_ = millis();
   if (!rtc_) return;
 
-  configTzTime(NetConfig::PosixTimezone, NetConfig::NtpServer);
+  configTzTime(timezone_.posixString(), NetConfig::NtpServer);
   struct tm timeinfo;
   if (getLocalTime(&timeinfo, 5000)) {
     rtc_->adjust(DateTime(timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday,
@@ -137,6 +137,10 @@ void WebDashboard::registerRoutes() {
 
   server_.on("/api/settings", HTTP_GET, [this](AsyncWebServerRequest *request) {
     request->send(200, "application/json", buildSettingsJson());
+  });
+
+  server_.on("/api/timezone", HTTP_GET, [this](AsyncWebServerRequest *request) {
+    request->send(200, "application/json", buildTimezoneJson());
   });
 
   server_.on("/api/alarm/snooze", HTTP_POST, [this](AsyncWebServerRequest *request) {
@@ -232,6 +236,23 @@ void WebDashboard::registerRoutes() {
   settingsHandler->setMethod(HTTP_POST);
   server_.addHandler(settingsHandler);
 
+  auto *timezoneHandler = new AsyncCallbackJsonWebHandler(
+      "/api/timezone", [this](AsyncWebServerRequest *request, JsonVariant &json) {
+        int index = json["index"] | -1;
+        if (index < 0 || index >= TimezoneStore::count()) {
+          request->send(400, "application/json", "{\"ok\":false,\"error\":\"invalid index\"}");
+          return;
+        }
+        timezone_.setIndex((uint8_t)index);
+        // Take effect right away rather than waiting for the next daily
+        // resync -- harmless if offline, syncTimeFromNtp() already
+        // tolerates that silently.
+        if (!apMode_) syncTimeFromNtp();
+        request->send(200, "application/json", "{\"ok\":true}");
+      });
+  timezoneHandler->setMethod(HTTP_POST);
+  server_.addHandler(timezoneHandler);
+
   server_.onNotFound(
       [](AsyncWebServerRequest *request) { request->send(404, "text/plain", "Not found"); });
 }
@@ -310,6 +331,19 @@ String WebDashboard::buildSettingsJson() {
   radioObj["volume"] = radio_.volume();
   JsonArray presets = radioObj["presets"].to<JsonArray>();
   for (uint8_t i = 0; i < radio_.presetCount(); i++) presets.add(radio_.preset(i));
+  String out;
+  serializeJson(doc, out);
+  return out;
+}
+
+String WebDashboard::buildTimezoneJson() {
+  JsonDocument doc;
+  doc["index"] = timezone_.index();
+  doc["label"] = timezone_.label();
+  JsonArray options = doc["options"].to<JsonArray>();
+  for (uint8_t i = 0; i < TimezoneStore::count(); i++) {
+    options.add(TimezoneStore::entry(i).label);
+  }
   String out;
   serializeJson(doc, out);
   return out;

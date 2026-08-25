@@ -39,12 +39,12 @@ WakeSource cycleWakeSource(WakeSource source, int8_t direction) {
   return static_cast<WakeSource>(next);
 }
 
-constexpr uint8_t kHomeMenuItems = 4;  // AlarmList, Radio, WifiInfo, SetTime
+constexpr uint8_t kHomeMenuItems = 5;  // AlarmList, Radio, WifiInfo, SetTime, Timezone
 }  // namespace
 
 MenuSystem::MenuSystem(Adafruit_ST7789 &tft, AlarmClock &alarms, RadioTuner &radio,
-                       BatteryMonitor *battery, RTC_DS3231 *rtc)
-    : tft_(tft), alarms_(alarms), radio_(radio), battery_(battery), rtc_(rtc) {}
+                       BatteryMonitor *battery, RTC_DS3231 *rtc, TimezoneStore &timezone)
+    : tft_(tft), alarms_(alarms), radio_(radio), battery_(battery), rtc_(rtc), timezone_(timezone) {}
 
 void MenuSystem::begin() {
   pinMode(Pins::MenuSelect, INPUT_PULLUP);
@@ -106,6 +106,9 @@ void MenuSystem::handleInput(const DateTime &now) {
             editingMinute_ = now.minute();
             editField_ = 0;
             screen_ = MenuScreen::SetTime;
+            break;
+          case 4:
+            screen_ = MenuScreen::Timezone;
             break;
         }
       }
@@ -199,6 +202,13 @@ void MenuSystem::handleInput(const DateTime &now) {
       }
       break;
     }
+
+    case MenuScreen::Timezone: {
+      if (up) timezone_.next();
+      if (down) timezone_.previous();
+      if (longPress) screen_ = MenuScreen::Home;
+      break;
+    }
   }
 }
 
@@ -232,6 +242,9 @@ void MenuSystem::render(const DateTime &now, const String &wifiStatusLine) {
       break;
     case MenuScreen::SetTime:
       renderSetTime();
+      break;
+    case MenuScreen::Timezone:
+      renderTimezone();
       break;
   }
 }
@@ -273,7 +286,7 @@ void MenuSystem::renderHome(const DateTime &now) {
   }
   tft_.println();
 
-  static const char *items[kHomeMenuItems] = {"Alarms", "Radio", "WiFi", "Time"};
+  static const char *items[kHomeMenuItems] = {"Alarms", "Radio", "WiFi", "Time", "TZ"};
   for (uint8_t i = 0; i < kHomeMenuItems; i++) {
     tft_.printf("%s%s  ", i == cursor_ ? ">" : " ", items[i]);
   }
@@ -376,4 +389,16 @@ void MenuSystem::renderSetTime() {
   }
   tft_.println();
   tft_.println("tap: next  hold: cancel");
+}
+
+void MenuSystem::renderTimezone() {
+  tft_.println("Timezone");
+  tft_.println();
+  tft_.println(timezone_.label());
+  tft_.println();
+  tft_.println("Takes effect on the");
+  tft_.println("next NTP sync.");
+  tft_.println();
+  tft_.println("up/down: change");
+  tft_.println("hold: back");
 }
