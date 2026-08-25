@@ -19,6 +19,14 @@
 // using timezone's currently-selected POSIX TZ string for the UTC->local
 // conversion) and exposes an OTA firmware-update page at /update via
 // ElegantOTA.
+//
+// Login: the setup AP itself is the trust boundary (same as any open
+// provisioning AP -- you need to already be near the device to join it), so
+// the dashboard requires no login while apMode_ is true, and shows the
+// randomly-generated default password right on that AP-mode page so it can
+// be carried over to the home network. Once on the home network (STA mode),
+// every route (dashboard page, JSON API, and always /update regardless of
+// mode) requires HTTP Basic Auth against the stored admin credentials.
 class WebDashboard {
  public:
   WebDashboard(AlarmClock &alarms, RadioTuner &radio, RTC_DS3231 *rtc, BatteryMonitor *battery,
@@ -43,9 +51,16 @@ class WebDashboard {
   String buildRadioJson();
   String buildSettingsJson();
   String buildTimezoneJson();
+  String buildSecurityJson();
   bool applySettingsJson(JsonVariantConst doc);
   static void loadWifiCredentials(String &ssid, String &password);
   static void saveWifiCredentials(const String &ssid, const String &password);
+  void loadOrCreateAdminCredentials();
+  void saveAdminCredentials(const String &username, const String &password);
+  // Returns true (and lets the caller proceed) if authenticated or if
+  // apMode_ makes auth a no-op; otherwise sends a 401 challenge and returns
+  // false -- callers must return immediately when this returns false.
+  bool requireAuth(AsyncWebServerRequest *request) const;
 
   AsyncWebServer server_{80};
   AlarmClock &alarms_;
@@ -56,6 +71,8 @@ class WebDashboard {
 
   bool apMode_ = true;
   String staSsid_;
+  String adminUsername_;
+  String adminPassword_;
   uint32_t restartAtMs_ = 0;   // 0 = no restart pending
   uint32_t lastNtpSyncMs_ = 0; // 0 = never synced yet this boot
 };

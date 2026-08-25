@@ -36,6 +36,7 @@ Off-the-shelf radio alarm clocks are either dumb (no scheduling beyond one or tw
 - **Dead-air fallback** — if the tuned station has no signal when the alarm fires, it automatically switches to a gentle tone instead of static.
 - **Per-alarm wake source** — radio, a classic beep, or a two-note chime; three independent schedules, each with its own days-of-week mask.
 - **Web dashboard** — configure alarms, radio presets, volume, and WiFi from a phone; no app, no account, no cloud.
+- **Login-protected once on your WiFi** — a random per-device password is generated on first boot and shown on the setup page; the dashboard and OTA updates require it (except during initial AP setup, where you're already physically close enough to the device that it doesn't add anything).
 - **OTA firmware updates** — reflash over WiFi from the dashboard once it's built and sealed up.
 - **Real battery monitoring** — an onboard fuel-gauge chip (MAX17048), not a voltage-divider guess.
 - **NTP time sync with a selectable timezone** — corrects the RTC automatically once on WiFi, so it doesn't slowly drift; pick your timezone (DST rule included) from the on-device menu or the dashboard, nothing hardcoded.
@@ -74,7 +75,7 @@ See [`docs/wiring-diagram.html`](docs/wiring-diagram.html) for wiring notes/assu
 
 A PlatformIO project targeting the ESP32-S3 via the [pioarduino](https://github.com/pioarduino/platform-espressif32) platform fork. Covers alarm scheduling (sunrise ramp + dead-air fallback), FM radio control, an on-device TFT menu, battery monitoring, NTP time sync, OTA updates, and the WiFi setup/status web dashboard.
 
-It builds clean and its hardware-independent logic (alarm scheduling, radio wrapper, wake orchestration, on-device menu, the snooze button's dual behavior) has 42 passing unit tests that run on every push — see the CI badge above — but it hasn't been flashed to real hardware yet, since none of the parts have arrived. See [`docs/firmware.md`](docs/firmware.md) for the module architecture, build/flash instructions, the dashboard's API, and current known gaps.
+It builds clean and its hardware-independent logic (alarm scheduling, radio wrapper, wake orchestration, on-device menu, the snooze button's dual behavior, timezone selection) has 50 passing unit tests that run on every push — see the CI badge above — but it hasn't been flashed to real hardware yet, since none of the parts have arrived. See [`docs/firmware.md`](docs/firmware.md) for the module architecture, build/flash instructions, the dashboard's API, and current known gaps.
 
 ## Getting started
 

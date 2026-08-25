@@ -27,11 +27,14 @@ static const char kDashboardHtml[] = R"rawliteral(
   .status.low-battery { color: #e05252; }
   .alarm-ringing { border: 2px solid #e05252; }
   textarea { height: 5rem; font-size: 0.75rem; }
+  .credential-banner { display: none; background: #2a2410; border: 1px solid #d4a017; border-radius: 10px; padding: 0.85rem; margin-bottom: 1rem; font-size: 0.85rem; }
+  .credential-banner code { background: #12151a; padding: 0.15rem 0.4rem; border-radius: 4px; }
 </style>
 </head>
 <body>
 <h1>ESP32 Radio Alarm Clock</h1>
 <div class="status" id="statusLine">Loading&hellip;</div>
+<div class="credential-banner" id="credentialBanner"></div>
 
 <section id="wifiSection">
   <h2>WiFi</h2>
@@ -41,6 +44,16 @@ static const char kDashboardHtml[] = R"rawliteral(
   </div>
   <button onclick="saveWifi()">Join network</button>
   <a class="button" href="/update">Firmware update</a>
+</section>
+
+<section>
+  <h2>Security</h2>
+  <div class="row">
+    <label style="flex:1">Username<input type="text" id="authUsername"></label>
+    <label style="flex:1">New password<input type="password" id="authPassword"></label>
+  </div>
+  <button onclick="saveSecurity()">Update login</button>
+  <div class="status">You'll be asked to log in again with the new credentials.</div>
 </section>
 
 <section>
@@ -117,7 +130,22 @@ async function refresh() {
     statusEl.textContent =
       `${status.mode === 'ap' ? 'Setup mode' : 'Connected: ' + status.ssid} · ${status.ip} · ${status.time || 'no RTC'} · alarm: ${status.alarmState}${battery}`;
     statusEl.className = 'status' + (status.batteryLow ? ' low-battery' : '');
+
+    const banner = document.getElementById('credentialBanner');
+    if (status.dashboardPassword) {
+      banner.style.display = 'block';
+      banner.innerHTML = `<strong>Save this dashboard login</strong> &mdash; you'll need it once connected to WiFi: ` +
+        `username <code>${status.dashboardUsername}</code>, password <code>${status.dashboardPassword}</code>. Change it below under Security.`;
+    } else {
+      banner.style.display = 'none';
+    }
   } catch (e) { /* device may be mid-reboot after WiFi save */ }
+
+  try {
+    const security = await api('/api/security');
+    const usernameField = document.getElementById('authUsername');
+    if (document.activeElement !== usernameField) usernameField.value = security.username;
+  } catch (e) {}
 
   try {
     const tz = await api('/api/timezone');
@@ -171,6 +199,15 @@ async function saveWifi() {
   await api('/api/wifi', { method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ssid: document.getElementById('wifiSsid').value, password: document.getElementById('wifiPassword').value }) });
   document.getElementById('statusLine').textContent = 'Saved. Rebooting to join network...';
+}
+
+async function saveSecurity() {
+  const password = document.getElementById('authPassword').value;
+  if (!password) { alert('Enter a new password.'); return; }
+  await api('/api/security', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username: document.getElementById('authUsername').value, password }) });
+  document.getElementById('authPassword').value = '';
+  alert('Login updated. Reload the page and sign in with the new credentials.');
 }
 
 async function setTimezone() {

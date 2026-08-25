@@ -67,6 +67,13 @@ constexpr uint32_t StaConnectTimeoutMs = 15000;
 // applicable) is a user setting -- see TimezoneStore -- not hardcoded here.
 constexpr const char *NtpServer = "pool.ntp.org";
 constexpr uint32_t NtpResyncIntervalMs = 24UL * 60 * 60 * 1000;
+
+// Dashboard/OTA login. The username defaults to this constant, but the
+// password is never a fixed value baked into every unit -- see
+// WebDashboard::loadOrCreateAdminCredentials(), which generates a random
+// per-device default on first boot and persists it, changeable later from
+// the dashboard's Security section.
+constexpr const char *DefaultAdminUsername = "admin";
 }  // namespace NetConfig
 
 namespace BatteryConfig {

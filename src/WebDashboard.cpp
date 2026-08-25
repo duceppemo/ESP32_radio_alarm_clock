@@ -5,6 +5,7 @@
 #include <ESPmDNS.h>
 #include <Preferences.h>
 #include <WiFi.h>
+#include <esp_random.h>
 #include <time.h>
 
 #include "DashboardPage.h"
@@ -13,6 +14,10 @@ namespace {
 constexpr const char *kWifiNamespace = "wifi";
 constexpr const char *kSsidKey = "ssid";
 constexpr const char *kPasswordKey = "password";
+
+constexpr const char *kAuthNamespace = "auth";
+constexpr const char *kAuthUserKey = "user";
+constexpr const char *kAuthPassKey = "pass";
 
 const char *alarmStateName(AlarmState state) {
   switch (state) {
@@ -48,6 +53,12 @@ WebDashboard::WebDashboard(AlarmClock &alarms, RadioTuner &radio, RTC_DS3231 *rt
     : alarms_(alarms), radio_(radio), rtc_(rtc), battery_(battery), timezone_(timezone) {}
 
 void WebDashboard::begin() {
+  loadOrCreateAdminCredentials();
+  // OTA (firmware flashing) is the highest-risk action here, so it's always
+  // gated -- unlike the rest of the dashboard, which skips auth in AP mode
+  // (see requireAuth()).
+  ElegantOTA.setAuth(adminUsername_.c_str(), adminPassword_.c_str());
+
   String ssid, password;
   loadWifiCredentials(ssid, password);
 
@@ -119,42 +130,56 @@ void WebDashboard::syncTimeFromNtp() {
 }
 
 void WebDashboard::registerRoutes() {
-  server_.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
+  server_.on("/", HTTP_GET, [this](AsyncWebServerRequest *request) {
+    if (!requireAuth(request)) return;
     request->send(200, "text/html", kDashboardHtml);
   });
 
   server_.on("/api/status", HTTP_GET, [this](AsyncWebServerRequest *request) {
+    if (!requireAuth(request)) return;
     request->send(200, "application/json", buildStatusJson());
   });
 
   server_.on("/api/radio", HTTP_GET, [this](AsyncWebServerRequest *request) {
+    if (!requireAuth(request)) return;
     request->send(200, "application/json", buildRadioJson());
   });
 
   server_.on("/api/alarms", HTTP_GET, [this](AsyncWebServerRequest *request) {
+    if (!requireAuth(request)) return;
     request->send(200, "application/json", buildAlarmsJson());
   });
 
   server_.on("/api/settings", HTTP_GET, [this](AsyncWebServerRequest *request) {
+    if (!requireAuth(request)) return;
     request->send(200, "application/json", buildSettingsJson());
   });
 
   server_.on("/api/timezone", HTTP_GET, [this](AsyncWebServerRequest *request) {
+    if (!requireAuth(request)) return;
     request->send(200, "application/json", buildTimezoneJson());
   });
 
+  server_.on("/api/security", HTTP_GET, [this](AsyncWebServerRequest *request) {
+    if (!requireAuth(request)) return;
+    request->send(200, "application/json", buildSecurityJson());
+  });
+
   server_.on("/api/alarm/snooze", HTTP_POST, [this](AsyncWebServerRequest *request) {
+    if (!requireAuth(request)) return;
     if (rtc_) alarms_.snooze(rtc_->now());
     request->send(200, "application/json", "{\"ok\":true}");
   });
 
   server_.on("/api/alarm/dismiss", HTTP_POST, [this](AsyncWebServerRequest *request) {
+    if (!requireAuth(request)) return;
     alarms_.dismiss();
     request->send(200, "application/json", "{\"ok\":true}");
   });
 
   auto *wifiHandler = new AsyncCallbackJsonWebHandler(
       "/api/wifi", [this](AsyncWebServerRequest *request, JsonVariant &json) {
+        if (!requireAuth(request)) return;
         String ssid = json["ssid"] | "";
         String password = json["password"] | "";
         if (ssid.isEmpty()) {
@@ -168,8 +193,25 @@ void WebDashboard::registerRoutes() {
   wifiHandler->setMethod(HTTP_POST);
   server_.addHandler(wifiHandler);
 
+  auto *securityHandler = new AsyncCallbackJsonWebHandler(
+      "/api/security", [this](AsyncWebServerRequest *request, JsonVariant &json) {
+        if (!requireAuth(request)) return;
+        String username = json["username"] | "";
+        String password = json["password"] | "";
+        if (username.isEmpty() || password.isEmpty()) {
+          request->send(400, "application/json",
+                        "{\"ok\":false,\"error\":\"username and password required\"}");
+          return;
+        }
+        saveAdminCredentials(username, password);
+        request->send(200, "application/json", "{\"ok\":true}");
+      });
+  securityHandler->setMethod(HTTP_POST);
+  server_.addHandler(securityHandler);
+
   auto *alarmHandler = new AsyncCallbackJsonWebHandler(
       "/api/alarms", [this](AsyncWebServerRequest *request, JsonVariant &json) {
+        if (!requireAuth(request)) return;
         int index = json["index"] | -1;
         if (index < 0 || index >= AlarmClock::count()) {
           request->send(400, "application/json", "{\"ok\":false,\"error\":\"invalid index\"}");
@@ -193,6 +235,7 @@ void WebDashboard::registerRoutes() {
 
   auto *radioHandler = new AsyncCallbackJsonWebHandler(
       "/api/radio", [this](AsyncWebServerRequest *request, JsonVariant &json) {
+        if (!requireAuth(request)) return;
         String action = json["action"] | "";
         int value = json["value"] | 0;
 
@@ -227,7 +270,9 @@ void WebDashboard::registerRoutes() {
 
   auto *settingsHandler = new AsyncCallbackJsonWebHandler(
       "/api/settings", [this](AsyncWebServerRequest *request, JsonVariant &json) {
+        if (!requireAuth(request)) return;
         if (applySettingsJson(json)) {
+          if (!apMode_) syncTimeFromNtp();
           request->send(200, "application/json", "{\"ok\":true}");
         } else {
           request->send(400, "application/json", "{\"ok\":false,\"error\":\"invalid settings\"}");
@@ -238,6 +283,7 @@ void WebDashboard::registerRoutes() {
 
   auto *timezoneHandler = new AsyncCallbackJsonWebHandler(
       "/api/timezone", [this](AsyncWebServerRequest *request, JsonVariant &json) {
+        if (!requireAuth(request)) return;
         int index = json["index"] | -1;
         if (index < 0 || index >= TimezoneStore::count()) {
           request->send(400, "application/json", "{\"ok\":false,\"error\":\"invalid index\"}");
@@ -262,6 +308,14 @@ String WebDashboard::buildStatusJson() {
   doc["mode"] = apMode_ ? "ap" : "sta";
   doc["ip"] = apMode_ ? WiFi.softAPIP().toString() : WiFi.localIP().toString();
   if (!apMode_) doc["ssid"] = staSsid_;
+  // The dashboard has no login while apMode_ is true (the open setup AP is
+  // itself the trust boundary), so this is the one chance to show the
+  // randomly-generated admin password before the device joins a network
+  // where auth starts being enforced.
+  if (apMode_) {
+    doc["dashboardUsername"] = adminUsername_;
+    doc["dashboardPassword"] = adminPassword_;
+  }
   if (rtc_) {
     DateTime now = rtc_->now();
     char buf[9];
@@ -317,6 +371,7 @@ String WebDashboard::buildRadioJson() {
 String WebDashboard::buildSettingsJson() {
   JsonDocument doc;
   doc["snoozeMinutes"] = alarms_.snoozeMinutes();
+  doc["timezoneIndex"] = timezone_.index();
   JsonArray alarmsArr = doc["alarms"].to<JsonArray>();
   for (uint8_t i = 0; i < AlarmClock::count(); i++) {
     const Alarm &a = alarms_.alarm(i);
@@ -349,6 +404,14 @@ String WebDashboard::buildTimezoneJson() {
   return out;
 }
 
+String WebDashboard::buildSecurityJson() {
+  JsonDocument doc;
+  doc["username"] = adminUsername_;
+  String out;
+  serializeJson(doc, out);
+  return out;
+}
+
 bool WebDashboard::applySettingsJson(JsonVariantConst doc) {
   JsonArrayConst alarmsArr = doc["alarms"];
   if (alarmsArr.isNull()) return false;
@@ -367,6 +430,13 @@ bool WebDashboard::applySettingsJson(JsonVariantConst doc) {
 
   if (!doc["snoozeMinutes"].isNull()) {
     alarms_.setSnoozeMinutes(doc["snoozeMinutes"]);
+  }
+
+  if (!doc["timezoneIndex"].isNull()) {
+    int tzIndex = doc["timezoneIndex"];
+    if (tzIndex >= 0 && tzIndex < TimezoneStore::count()) {
+      timezone_.setIndex((uint8_t)tzIndex);
+    }
   }
 
   JsonObjectConst radioObj = doc["radio"];
@@ -394,4 +464,49 @@ void WebDashboard::saveWifiCredentials(const String &ssid, const String &passwor
   prefs.putString(kSsidKey, ssid);
   prefs.putString(kPasswordKey, password);
   prefs.end();
+}
+
+void WebDashboard::loadOrCreateAdminCredentials() {
+  Preferences prefs;
+  prefs.begin(kAuthNamespace, false);
+  adminUsername_ = prefs.getString(kAuthUserKey, "");
+  adminPassword_ = prefs.getString(kAuthPassKey, "");
+  if (adminUsername_.isEmpty() || adminPassword_.isEmpty()) {
+    // First boot: generate a random-per-device default instead of shipping
+    // the same fixed password on every unit. Uses the hardware RNG, not the
+    // factory MAC -- the MAC is visible to anyone sniffing the setup AP's
+    // beacon frames, which would defeat the point.
+    adminUsername_ = NetConfig::DefaultAdminUsername;
+    char buf[9];
+    snprintf(buf, sizeof(buf), "%08X", (unsigned)esp_random());
+    adminPassword_ = buf;
+    prefs.putString(kAuthUserKey, adminUsername_);
+    prefs.putString(kAuthPassKey, adminPassword_);
+  }
+  prefs.end();
+  Serial.printf("Dashboard login: %s / %s (shown on the setup AP page; change it from Security)\n",
+                adminUsername_.c_str(), adminPassword_.c_str());
+}
+
+void WebDashboard::saveAdminCredentials(const String &username, const String &password) {
+  adminUsername_ = username;
+  adminPassword_ = password;
+  Preferences prefs;
+  prefs.begin(kAuthNamespace, false);
+  prefs.putString(kAuthUserKey, adminUsername_);
+  prefs.putString(kAuthPassKey, adminPassword_);
+  prefs.end();
+  ElegantOTA.setAuth(adminUsername_.c_str(), adminPassword_.c_str());
+}
+
+bool WebDashboard::requireAuth(AsyncWebServerRequest *request) const {
+  // The setup AP is itself the trust boundary -- same as any open
+  // provisioning AP, you already had to be physically near the device to
+  // join it -- so login only starts being enforced once on the home
+  // network. buildStatusJson() shows the generated password on this
+  // unauthenticated AP-mode page so it can be carried over.
+  if (apMode_) return true;
+  if (request->authenticate(adminUsername_.c_str(), adminPassword_.c_str())) return true;
+  request->requestAuthentication();
+  return false;
 }

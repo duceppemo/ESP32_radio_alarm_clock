@@ -68,15 +68,22 @@ On boot, `WebDashboard` loads WiFi credentials from NVS. If none are stored (or 
 |---|---|---|
 | `/` | GET | The dashboard page |
 | `/update` | GET | ElegantOTA firmware upload page |
-| `/api/status` | GET | Mode (AP/STA), IP, RTC time, alarm state, battery percent/voltage/low-flag |
+| `/api/status` | GET | Mode (AP/STA), IP, RTC time, alarm state, battery percent/voltage/low-flag; while in AP mode, also the generated dashboard login (see Login below) |
 | `/api/alarms` | GET / POST | List / update the 3 alarm schedules, including `wakeSource` |
 | `/api/alarm/snooze`, `/api/alarm/dismiss` | POST | Control a ringing alarm |
 | `/api/radio` | GET / POST | Read status (incl. sleep timer remaining); tune, seek, volume/mute, recall/store a preset, set/cancel the sleep timer |
 | `/api/wifi` | POST | Save `{ssid, password}` and reboot to join that network |
 | `/api/timezone` | GET / POST | Read the selected timezone + full option list; change it by index (re-syncs NTP immediately if online) |
-| `/api/settings` | GET / POST | Export/import alarms + snooze duration + radio volume/presets as one JSON blob (excludes WiFi credentials and timezone) |
+| `/api/security` | GET / POST | Read the current login username; change username/password |
+| `/api/settings` | GET / POST | Export/import alarms + snooze duration + radio volume/presets + timezone as one JSON blob (excludes WiFi credentials and the dashboard login) |
 
 Built on `esp32async/ESPAsyncWebServer` + `esp32async/AsyncTCP` (the actively maintained fork — not the archived `me-no-dev` originals), `bblanchon/ArduinoJson` v7, and `ayushsharma82/ElegantOTA`.
+
+### Login
+
+Every route requires HTTP Basic Auth against a username/password stored in NVS — *except* while the device is still in AP setup mode, where the open `AlarmClock-Setup` network is itself the trust boundary (you already had to be physically close enough to join it), so the dashboard is reachable with no login there. `/update` (firmware flashing) is the one exception that's always gated, in both modes, since it's the highest-risk action.
+
+On first boot `WebDashboard::loadOrCreateAdminCredentials()` generates a random 32-bit-entropy default password via the ESP32's hardware RNG (`esp_random()` — deliberately *not* derived from the chip's MAC, since that's visible to anyone sniffing the setup AP's beacon frames) and persists it. That password is shown right on the unauthenticated AP-mode dashboard page so it can be copied down before joining the home network, where auth starts being enforced. Change it anytime from the dashboard's Security section, which also re-applies it to `/update`'s auth immediately.
 
 ## Two independent audio paths
 
