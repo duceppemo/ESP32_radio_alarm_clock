@@ -10,6 +10,7 @@
 #include "AlarmSound.h"
 #include "BatteryMonitor.h"
 #include "Config.h"
+#include "DebouncedButton.h"
 #include "MenuSystem.h"
 #include "RadioTuner.h"
 #include "WakeController.h"
@@ -30,6 +31,9 @@ AlarmSound alarmSound;
 WakeController wakeController(alarmClock, radioTuner, alarmSound);
 MenuSystem menu(tft, alarmClock, radioTuner, &battery);
 WebDashboard dashboard(alarmClock, radioTuner, &rtc, &battery);
+
+DebouncedButton volumeUpButton(Pins::VolumeUp);
+DebouncedButton volumeDownButton(Pins::VolumeDown);
 
 static bool rtcOk = false;
 static bool lightSensorOk = false;
@@ -87,6 +91,9 @@ void setup() {
   reportStatus("Battery (MAX17048)", battery.begin());
   reportStatus("Alarm tone (buzzer)", alarmSound.begin());
 
+  pinMode(Pins::VolumeUp, INPUT_PULLUP);
+  pinMode(Pins::VolumeDown, INPUT_PULLUP);
+
   alarmClock.begin();
   radioTuner.begin();
   menu.begin();
@@ -101,6 +108,11 @@ void loop() {
   dashboard.update();
   menu.update(cachedNow, dashboard.statusLine());
   wakeController.tickFast();
+
+  volumeUpButton.update();
+  volumeDownButton.update();
+  if (volumeUpButton.justPressed()) radioTuner.volumeUp();
+  if (volumeDownButton.justPressed()) radioTuner.volumeDown();
 
   static uint32_t lastTickMs = 0;
   uint32_t nowMs = millis();

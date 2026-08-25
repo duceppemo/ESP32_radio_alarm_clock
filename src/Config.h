@@ -18,9 +18,8 @@
 namespace Pins {
 constexpr uint8_t RadioReset = A0;
 constexpr uint8_t SnoozeButton = A1;
-constexpr uint8_t EncoderA = A2;
-constexpr uint8_t EncoderB = A3;
-constexpr uint8_t EncoderSwitch = A4;
+constexpr uint8_t VolumeUp = A2;
+constexpr uint8_t VolumeDown = A3;
 constexpr uint8_t Buzzer = A5;
 
 // Onboard menu buttons (Adafruit ESP32-S3 Reverse TFT Feather pinout).
