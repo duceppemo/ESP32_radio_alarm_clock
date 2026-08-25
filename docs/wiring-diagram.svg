@@ -18,7 +18,7 @@
 
   <!-- I2C / STEMMA QT bus -->
   <g fill="none" stroke="#0e7c86" stroke-width="2.5">
-    <path d="M560,330 560,145 460,145"/>
+    <path d="M560,330 560,190"/>
     <path d="M620,145 680,145"/>
     <path d="M840,145 900,145"/>
     <path d="M1060,145 1150,145"/>
@@ -40,8 +40,8 @@
   <text x="236" y="378" font-family="IBM Plex Mono, ui-monospace, monospace" font-size="13" fill="#b8402c">BAT+</text>
 
   <!-- ground: battery - straight to Feather GND, bypassing the switch -->
-  <path d="M235,432 235,478 490,478 490,434" fill="none" stroke="#3a4450" stroke-width="2.5" stroke-dasharray="1 6" stroke-linecap="round"/>
-  <text x="294" y="472" font-family="IBM Plex Mono, ui-monospace, monospace" font-size="14" fill="#3a4450">GND (bypasses switch)</text>
+  <path d="M150,455 150,520 610,520 610,510" fill="none" stroke="#3a4450" stroke-width="2.5" stroke-dasharray="1 6" stroke-linecap="round"/>
+  <text x="220" y="512" font-family="IBM Plex Mono, ui-monospace, monospace" font-size="14" fill="#3a4450">GND (bypasses switch)</text>
 
   <!-- audio: Radio module -> Amp -> Speaker (pure analog, never touches the Feather) -->
   <g fill="none" stroke="#b06a15" stroke-width="2.5">
@@ -64,7 +64,7 @@
 
   <!-- connection dots -->
   <g fill="#0e7c86">
-    <circle cx="560" cy="330" r="3.5"/><circle cx="460" cy="145" r="3.5"/>
+    <circle cx="560" cy="330" r="3.5"/><circle cx="560" cy="190" r="3.5"/>
     <circle cx="620" cy="145" r="3.5"/><circle cx="680" cy="145" r="3.5"/>
     <circle cx="840" cy="145" r="3.5"/><circle cx="900" cy="145" r="3.5"/>
     <circle cx="1060" cy="145" r="3.5"/><circle cx="1150" cy="145" r="3.5"/>
@@ -74,7 +74,7 @@
     <circle cx="410" cy="390" r="3.5"/><circle cx="490" cy="388" r="3.5"/>
   </g>
   <g fill="#3a4450">
-    <circle cx="235" cy="432" r="3.5"/><circle cx="490" cy="434" r="3.5"/>
+    <circle cx="150" cy="455" r="3.5"/><circle cx="610" cy="510" r="3.5"/>
   </g>
   <g fill="#b06a15">
     <circle cx="1200" cy="190" r="3.5"/><circle cx="925" cy="365" r="3.5"/>
