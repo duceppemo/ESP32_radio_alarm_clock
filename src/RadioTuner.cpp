@@ -87,7 +87,8 @@ uint16_t RadioTuner::sleepTimerRemainingMinutes() const {
   if (sleepTimerEndMs_ == 0) return 0;
   uint32_t nowMs = millis();
   if (nowMs >= sleepTimerEndMs_) return 0;
-  return (sleepTimerEndMs_ - nowMs) / 60000UL + 1;
+  // Ceiling division: exactly N minutes left reads as N, not N+1.
+  return (sleepTimerEndMs_ - nowMs + 60000UL - 1) / 60000UL;
 }
 
 void RadioTuner::update() {
