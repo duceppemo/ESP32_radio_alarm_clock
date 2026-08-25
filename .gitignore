@@ -1,0 +1,17 @@
+# PlatformIO
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# Arduino IDE
+build/
+*.hex
+*.bin
+*.elf
+
+# VS Code
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
