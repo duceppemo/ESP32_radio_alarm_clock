@@ -21,6 +21,8 @@
 | 1 | CR1220 coin cell | TBD | TBD | RTC backup power, seats in the DS3231 breakout's onboard holder |
 | 1 | FM wire antenna | TBD | TBD | Antenna for the SI4730 AM/FM receiver module |
 
+See [`docs/wiring-diagram.html`](docs/wiring-diagram.html) for how everything connects.
+
 ## Controls
 
 - **Snooze**: dedicated panel-mount tactile button, front-mounted for easy reach, wired separately from the Feather's onboard top-mounted menu buttons.
