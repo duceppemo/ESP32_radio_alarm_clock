@@ -13,6 +13,7 @@
 #include "DebouncedButton.h"
 #include "MenuSystem.h"
 #include "RadioTuner.h"
+#include "SnoozeController.h"
 #include "WakeController.h"
 #include "WebDashboard.h"
 
@@ -29,11 +30,13 @@ AlarmClock alarmClock;
 RadioTuner radioTuner;
 AlarmSound alarmSound;
 WakeController wakeController(alarmClock, radioTuner, alarmSound);
+SnoozeController snoozeController(alarmClock, radioTuner);
 MenuSystem menu(tft, alarmClock, radioTuner, &battery);
 WebDashboard dashboard(alarmClock, radioTuner, &rtc, &battery);
 
 DebouncedButton volumeUpButton(Pins::VolumeUp);
 DebouncedButton volumeDownButton(Pins::VolumeDown);
+DebouncedButton snoozeButton(Pins::SnoozeButton);
 
 static bool rtcOk = false;
 static bool lightSensorOk = false;
@@ -93,6 +96,7 @@ void setup() {
 
   pinMode(Pins::VolumeUp, INPUT_PULLUP);
   pinMode(Pins::VolumeDown, INPUT_PULLUP);
+  pinMode(Pins::SnoozeButton, INPUT_PULLUP);
 
   alarmClock.begin();
   radioTuner.begin();
@@ -113,6 +117,9 @@ void loop() {
   volumeDownButton.update();
   if (volumeUpButton.justPressed()) radioTuner.volumeUp();
   if (volumeDownButton.justPressed()) radioTuner.volumeDown();
+
+  snoozeButton.update();
+  if (snoozeButton.justPressed()) snoozeController.onSnoozePressed(cachedNow);
 
   static uint32_t lastTickMs = 0;
   uint32_t nowMs = millis();

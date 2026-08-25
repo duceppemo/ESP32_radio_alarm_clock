@@ -229,6 +229,9 @@ void MenuSystem::renderHome(const DateTime &now) {
   }
   tft_.println(anyEnabled ? "Alarms set" : "No alarms set");
   tft_.printf("FM %.1f MHz\n", radio_.frequencyMHz());
+  if (radio_.sleepTimerActive()) {
+    tft_.printf("Sleep timer: %um\n", radio_.sleepTimerRemainingMinutes());
+  }
   if (battery_ && battery_->available()) {
     if (battery_->isLow()) tft_.setTextColor(ST77XX_RED);
     tft_.printf("Battery: %.0f%%\n", battery_->percent());

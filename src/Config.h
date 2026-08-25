@@ -52,6 +52,10 @@ constexpr uint16_t FmDefaultFreq = 9750; // 97.50 MHz
 constexpr uint8_t DefaultVolume = 30;    // SI4735 volume range is 0-63
 constexpr uint8_t MaxPresets = 6;
 constexpr uint16_t MaxSleepTimerMinutes = 120;
+
+// The snooze button doubles as a sleep-timer toggle when pressed while no
+// alarm is ringing and the radio is on -- see SnoozeController.
+constexpr uint16_t DefaultSleepTimerMinutes = 30;
 }  // namespace RadioConfig
 
 namespace NetConfig {
