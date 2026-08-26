@@ -179,19 +179,27 @@ async function refresh() {
   try {
     const alarms = await api('/api/alarms');
     const list = document.getElementById('alarmList');
-    list.innerHTML = '';
-    alarms.alarms.forEach((a, i) => {
-      const div = document.createElement('div');
-      div.className = 'row' + (alarms.state !== 'idle' && alarms.ringingIndex === i ? ' alarm-ringing' : '');
-      div.innerHTML = `
-        <input type="checkbox" ${a.enabled ? 'checked' : ''} onchange="updateAlarm(${i})" id="en${i}">
-        <input type="number" value="${a.hour}" min="0" max="23" style="width:3.5em" id="h${i}">:
-        <input type="number" value="${a.minute}" min="0" max="59" style="width:3.5em" id="m${i}">
-        <span class="days">${dayLabels.map((d, di) => `<label><input type="checkbox" ${a.days[di] ? 'checked' : ''} id="d${i}_${di}">${d}</label>`).join('')}</span>
-        <select id="w${i}" style="width:auto">${wakeSources.map(([v, l]) => `<option value="${v}" ${a.wakeSource === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
-        <button onclick="updateAlarm(${i})">Save</button>`;
-      list.appendChild(div);
-    });
+    // Skip the rebuild while a field inside the list is being edited, so an
+    // in-progress edit isn't wiped out by a poll that lands mid-keystroke.
+    // Doesn't apply to the Save button itself (not INPUT/SELECT), so the
+    // list still refreshes normally right after saving.
+    const active = document.activeElement;
+    const editing = list.contains(active) && (active.tagName === 'INPUT' || active.tagName === 'SELECT');
+    if (!editing) {
+      list.innerHTML = '';
+      alarms.alarms.forEach((a, i) => {
+        const div = document.createElement('div');
+        div.className = 'row' + (alarms.state !== 'idle' && alarms.ringingIndex === i ? ' alarm-ringing' : '');
+        div.innerHTML = `
+          <input type="checkbox" ${a.enabled ? 'checked' : ''} onchange="updateAlarm(${i})" id="en${i}">
+          <input type="number" value="${a.hour}" min="0" max="23" style="width:3.5em" id="h${i}">:
+          <input type="number" value="${a.minute}" min="0" max="59" style="width:3.5em" id="m${i}">
+          <span class="days">${dayLabels.map((d, di) => `<label><input type="checkbox" ${a.days[di] ? 'checked' : ''} id="d${i}_${di}">${d}</label>`).join('')}</span>
+          <select id="w${i}" style="width:auto">${wakeSources.map(([v, l]) => `<option value="${v}" ${a.wakeSource === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
+          <button onclick="updateAlarm(${i})">Save</button>`;
+        list.appendChild(div);
+      });
+    }
   } catch (e) {}
 }
 
