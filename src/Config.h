@@ -31,6 +31,8 @@ constexpr uint8_t MenuDown = 2;    // D2
 namespace AlarmConfig {
 constexpr uint8_t MaxAlarms = 3;
 constexpr uint8_t DefaultSnoozeMinutes = 9;
+constexpr uint8_t MinSnoozeMinutes = 1;
+constexpr uint8_t MaxSnoozeMinutes = 60;
 
 // Gradual/"sunrise" wake: volume ramps from WakeRampStartVolume up to
 // whatever volume was last set, over WakeRampSeconds.

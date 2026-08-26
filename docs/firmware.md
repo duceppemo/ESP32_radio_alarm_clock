@@ -27,7 +27,7 @@ This needs a native C/C++ toolchain (MinGW-w64, via `winget install BrechtSander
 
 | Suite | Covers |
 |---|---|
-| `test/test_alarm_clock/` | Day-of-week mask matching, ringing/snoozed state transitions, snooze timing, the dedup-within-a-minute guard, persistence across instances. |
+| `test/test_alarm_clock/` | Day-of-week mask matching, ringing/snoozed state transitions, snooze timing, the dedup-within-a-minute guard, `setAlarm()`/`setSnoozeMinutes()` clamping out-of-range input to a valid hour/minute/snooze-length, persistence across instances. |
 | `test/test_radio_tuner/` | FM-band clamping, volume clamping, the transient-vs-persisted volume setter, preset store/recall, sleep timer expiry and its remaining-minutes math, persistence across instances. |
 | `test/test_wake_controller/` | The sunrise volume ramp's math, the dead-air RSSI fallback (and that it does *not* fire with a good signal), beep/chime wake sources muting the radio and starting the right tone immediately, what dismissing/snoozing does and doesn't restore. |
 | `test/test_snooze_controller/` | The physical snooze button's dual behavior: snoozes a ringing/snoozed alarm (and doesn't also touch the radio's sleep timer while doing so), otherwise toggles the radio's sleep timer on/off if the radio is on, and does nothing if the radio's off. |
@@ -50,7 +50,7 @@ The `[env:native]` build only compiles the `src/*.cpp` files listed in `build_sr
 | File | Responsibility |
 |---|---|
 | [`src/Config.h`](../src/Config.h) | Pin assignments and shared tunables. All non-bus pins (radio reset, snooze/volume buttons, buzzer) are placeholders pending final wiring — see [`wiring-diagram.html`](wiring-diagram.html). |
-| [`src/AlarmClock.*`](../src/AlarmClock.h) | Up to 3 schedules and an idle/ringing/snoozed state machine, each with a `WakeSource` (radio / beep / chime). Persisted to NVS via `Preferences`. Only needs a `DateTime` per tick, so it's hardware-independent. |
+| [`src/AlarmClock.*`](../src/AlarmClock.h) | Up to 3 schedules and an idle/ringing/snoozed state machine, each with a `WakeSource` (radio / beep / chime). `setAlarm()`/`setSnoozeMinutes()` clamp hour/minute/snooze-length to valid ranges regardless of caller — the on-device menu only ever produces valid values itself, but the dashboard's JSON API doesn't guarantee that, so the clamp lives here rather than being trusted to every caller. Persisted to NVS via `Preferences`. Only needs a `DateTime` per tick, so it's hardware-independent. |
 | [`src/RadioTuner.*`](../src/RadioTuner.h) | Wraps the [PU2CLR SI4735](https://github.com/pu2clr/SI4735) driver for the onboard SI4730 FM tuner: tune/seek/volume/mute, 6 presets, a sleep timer, all persisted to NVS (except the sunrise-ramp's intermediate volume steps, which use a transient setter that skips the flash write). This is control only, over I2C — see the audio-path note below. |
 | [`src/AlarmSound.*`](../src/AlarmSound.h) | Drives a piezo buzzer on `Pins::Buzzer` via Arduino's `tone()`/`noTone()`, stepping through a small pattern table: an urgent 1.8/2.2kHz alternating beep, or a gentler ascending A-major-triad chime (A5→C♯6→E6). Used both as a selectable wake sound and as the dead-air fallback below. Entirely unrelated to the radio's audio path. |
 | [`src/BatteryMonitor.*`](../src/BatteryMonitor.h) | Wraps the onboard MAX17048 LiPoly fuel gauge (I2C, address 0x36) for voltage/percent/low-battery. |

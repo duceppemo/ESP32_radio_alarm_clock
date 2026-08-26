@@ -161,6 +161,33 @@ void test_earliest_matching_alarm_wins_when_two_share_a_time() {
   TEST_ASSERT_EQUAL(0, clock.ringingAlarmIndex());
 }
 
+void test_set_alarm_clamps_out_of_range_hour_and_minute() {
+  AlarmClock clock;
+  clock.begin();
+
+  Alarm a;
+  a.hour = 99;
+  a.minute = 200;
+  clock.setAlarm(0, a);
+
+  TEST_ASSERT_EQUAL(23, clock.alarm(0).hour);
+  TEST_ASSERT_EQUAL(59, clock.alarm(0).minute);
+}
+
+void test_set_snooze_minutes_clamps_to_a_sane_range() {
+  AlarmClock clock;
+  clock.begin();
+
+  clock.setSnoozeMinutes(0);
+  TEST_ASSERT_EQUAL(AlarmConfig::MinSnoozeMinutes, clock.snoozeMinutes());
+
+  clock.setSnoozeMinutes(255);
+  TEST_ASSERT_EQUAL(AlarmConfig::MaxSnoozeMinutes, clock.snoozeMinutes());
+
+  clock.setSnoozeMinutes(15);
+  TEST_ASSERT_EQUAL(15, clock.snoozeMinutes());
+}
+
 void test_settings_persist_across_instances_via_preferences() {
   {
     AlarmClock clock;
@@ -198,6 +225,8 @@ int main(int argc, char **argv) {
   RUN_TEST(test_snooze_holds_then_re_rings_after_snooze_duration);
   RUN_TEST(test_dismiss_clears_ringing_state);
   RUN_TEST(test_earliest_matching_alarm_wins_when_two_share_a_time);
+  RUN_TEST(test_set_alarm_clamps_out_of_range_hour_and_minute);
+  RUN_TEST(test_set_snooze_minutes_clamps_to_a_sane_range);
   RUN_TEST(test_settings_persist_across_instances_via_preferences);
   return UNITY_END();
 }

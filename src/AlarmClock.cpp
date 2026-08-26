@@ -12,11 +12,20 @@ void AlarmClock::begin() { load(); }
 void AlarmClock::setAlarm(uint8_t index, const Alarm &alarm) {
   if (index >= count()) return;
   alarms_[index] = alarm;
+  // The on-device menu only ever produces in-range values (it wraps with
+  // %24/%60 as you scroll), but this is also reachable straight from the
+  // dashboard's JSON API with no such guarantee -- clamp here so a bad
+  // request can't silently store an hour/minute that can never match
+  // update()'s now.hour()/now.minute() comparison, i.e. an alarm that
+  // looks configured but can never fire.
+  alarms_[index].hour = min<uint8_t>(alarms_[index].hour, 23);
+  alarms_[index].minute = min<uint8_t>(alarms_[index].minute, 59);
   save();
 }
 
 void AlarmClock::setSnoozeMinutes(uint8_t minutes) {
-  snoozeMinutes_ = minutes;
+  snoozeMinutes_ =
+      constrain(minutes, AlarmConfig::MinSnoozeMinutes, AlarmConfig::MaxSnoozeMinutes);
   save();
 }
 
