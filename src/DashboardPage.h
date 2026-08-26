@@ -161,7 +161,10 @@ async function refresh() {
     const radio = await api('/api/radio');
     document.getElementById('radioFreq').textContent = (radio.frequency10kHz / 100).toFixed(1) + ' MHz';
     document.getElementById('volumeValue').textContent = radio.volume;
-    document.getElementById('volumeSlider').value = radio.volume;
+    // Same clobbering guard as the alarm list/timezone/username fields
+    // elsewhere in this file -- don't yank the slider mid-drag.
+    const volumeSlider = document.getElementById('volumeSlider');
+    if (document.activeElement !== volumeSlider) volumeSlider.value = radio.volume;
     document.getElementById('muteBtn').textContent = radio.muted ? 'Unmute' : 'Mute';
     document.getElementById('sleepStatus').textContent =
       radio.sleepTimerMinutes > 0 ? `${radio.sleepTimerMinutes} min left` : '';
