@@ -17,7 +17,7 @@ Run these from PowerShell, not Git Bash. Git Bash's MSYS-style environment fails
 
 ## Testing
 
-Seven modules' logic has real unit tests that run on the host machine — no ESP32 hardware needed:
+Eight modules' logic has real unit tests that run on the host machine — no ESP32 hardware needed:
 
 ```powershell
 pio test -e native
@@ -34,6 +34,7 @@ This needs a native C/C++ toolchain (MinGW-w64, via `winget install BrechtSander
 | `test/test_menu_system/` | The button-driven screen/state machine, end to end: short/long press, field-by-field alarm editing (including discarding on cancel), Radio-screen tune/mute, the ringing-alarm snooze/dismiss shortcut on Home, the Set Time screen (saves the right hour/minute while preserving the date, cancel discards it, a null `rtc_` doesn't crash, and `setRtcAvailable(false)` skips saving even with a *non-null* `rtc_`), and the Timezone screen (up/down cycles the selection, long-press backs out without losing it). Since `MenuSystem`'s screen/cursor state is private by design, these drive full interaction sequences via simulated button presses and assert on the resulting `AlarmClock`/`RadioTuner`/`RTC_DS3231`/`TimezoneStore` state, the same way a real user's presses would. |
 | `test/test_timezone_store/` | The curated timezone list: defaults to UTC, `next()`/`previous()` step by one and wrap at both ends, an out-of-range `setIndex()` falls back to UTC instead of leaving stale state, the selection persists across instances (NVS-backed), and every entry has a non-empty label and POSIX TZ string. |
 | `test/test_display_dimmer/` | The lux-to-brightness curve: clamps to minimum at/below the dim threshold and maximum at/above the bright threshold (including out-of-range negative lux), interpolates correctly at the midpoint, and never decreases as lux increases. |
+| `test/test_battery_monitor/` | Stays `available() == false` with safe zeroed readings before `begin()` succeeds (and stays that way if `begin()` fails), reports the fuel gauge's real voltage/percent once available, and `isLow()`'s threshold comparison (at/above/below `BatteryConfig::LowPercentThreshold`). |
 
 The `[env:native]` build only compiles the `src/*.cpp` files listed in `build_src_filter` — `WebDashboard` isn't among them and isn't covered: it depends on `ESPAsyncWebServer`/`WiFi`/`ESPmDNS`, and its actual logic is mostly JSON marshaling coupled directly to request/response objects, so faking that stack well enough to test route handlers would be a much bigger, more fragile undertaking for comparatively little payoff versus the other modules here.
 
@@ -42,7 +43,8 @@ The `[env:native]` build only compiles the `src/*.cpp` files listed in `build_sr
 - `RTClib.h` — reimplements only `DateTime`/`TimeSpan`'s calendar math (Howard Hinnant's `days_from_civil`/`civil_from_days` algorithms), verified against Python's `datetime`, plus a minimal `RTC_DS3231` (`adjust()`/`now()`) so `MenuSystem`'s Set Time screen is testable.
 - `Preferences.h` — an in-memory map standing in for the ESP32 NVS wrapper. Backed by one process-wide static store, so call `Preferences::resetAll()` in `setUp()` to avoid leaking state between test cases.
 - `SI4735.h` — records what `RadioTuner` sets and lets tests control what "the chip" reports back, notably `SI4735::setSimulatedRssi()` for dead-air testing.
-- `Adafruit_GFX.h` / `Adafruit_ST7789.h` / `Adafruit_MAX1704X.h` — no-op display/fuel-gauge stand-ins, just enough for `MenuSystem` to construct and render without a real screen.
+- `Adafruit_GFX.h` / `Adafruit_ST7789.h` — no-op display stand-ins, just enough for `MenuSystem` to construct and render without a real screen.
+- `Adafruit_MAX1704X.h` — records what `BatteryMonitor` reads and lets tests control what "the chip" reports back (`setSimulatedVoltage()`/`setSimulatedPercent()`/`setSimulatedBeginOk()`), the same pattern as `SI4735.h`'s RSSI simulation.
 - `Arduino.h` — a fake `millis()` and per-pin `digitalRead()` that tests control directly (`native_fake_millis_value()`, `native_fake_digital_state(pin)`), plus the handful of other free functions/macros (`pinMode`, `tone`/`noTone`, `min`/`max`, `constrain`) the tested modules call.
 
 ## Modules
