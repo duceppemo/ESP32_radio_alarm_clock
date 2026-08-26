@@ -87,6 +87,15 @@ void setup() {
       rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
     }
     cachedNow = rtc.now();
+  } else {
+    // menu/dashboard are constructed (and handed &rtc) before rtc.begin() is
+    // ever called -- global objects are initialized before setup() runs, so
+    // there was no way to know yet whether the hardware actually responded.
+    // Tell them now, so their own "no RTC" fallbacks (Set Time's warning,
+    // skipping NTP-driven adjust() calls, the dashboard's status "time"
+    // field) actually engage instead of trusting a non-functional RTC.
+    menu.setRtcAvailable(false);
+    dashboard.setRtcAvailable(false);
   }
 
   lightSensorOk = lightSensor.begin();

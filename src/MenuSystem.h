@@ -28,6 +28,13 @@ class MenuSystem {
   // is a short caller-supplied string (SSID/IP or AP name) for WifiInfo.
   void update(const DateTime &now, const String &wifiStatusLine);
 
+  // rtc is constructed and wired up before rtc->begin() is ever called (it's
+  // a global, initialized before setup() runs), so the constructor can't
+  // know yet whether the hardware actually responded -- call this once
+  // setup() finds out, so a non-null-but-non-functional rtc doesn't get
+  // treated as available.
+  void setRtcAvailable(bool available) { rtcAvailable_ = available; }
+
  private:
   void handleInput(const DateTime &now);
   void render(const DateTime &now, const String &wifiStatusLine);
@@ -45,6 +52,7 @@ class MenuSystem {
   RadioTuner &radio_;
   BatteryMonitor *battery_;
   RTC_DS3231 *rtc_;
+  bool rtcAvailable_ = true;
   TimezoneStore &timezone_;
 
   DebouncedButton select_{Pins::MenuSelect};

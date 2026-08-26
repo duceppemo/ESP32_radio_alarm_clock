@@ -189,7 +189,7 @@ void MenuSystem::handleInput(const DateTime &now) {
       }
       if (shortPress) {
         if (editField_ >= 2) {
-          if (rtc_) {
+          if (rtc_ && rtcAvailable_) {
             rtc_->adjust(DateTime(now.year(), now.month(), now.day(), editingHour_, editingMinute_, 0));
           }
           screen_ = MenuScreen::Home;
@@ -383,7 +383,7 @@ void MenuSystem::renderSetTime() {
         tft_.println();
     }
   }
-  if (!rtc_) {
+  if (!rtc_ || !rtcAvailable_) {
     tft_.println();
     tft_.println("(no RTC -- won't save)");
   }

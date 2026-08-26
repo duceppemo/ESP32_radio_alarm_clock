@@ -265,6 +265,37 @@ void test_set_time_with_no_rtc_does_not_crash() {
   TEST_ASSERT_TRUE(true);  // reaching here without crashing is the assertion
 }
 
+void test_set_rtc_unavailable_skips_saving_even_with_a_non_null_rtc() {
+  // Regression: main.cpp constructs MenuSystem with &rtc before rtc.begin()
+  // is ever called (it's a global, wired up before setup() runs), so a
+  // failed rtc.begin() used to have no way to stop Set Time from silently
+  // "saving" to hardware that was never actually there. setRtcAvailable(false)
+  // is how setup() corrects that after the fact.
+  AlarmClock alarms;
+  alarms.begin();
+  RadioTuner radio;
+  radio.begin();
+  RTC_DS3231 rtc;
+  rtc.adjust(kNow);
+  Adafruit_ST7789 tft(0, 0, 0);
+  TimezoneStore timezone;
+  timezone.begin();
+  MenuSystem menu(tft, alarms, radio, nullptr, &rtc, timezone);
+  menu.begin();
+  menu.setRtcAvailable(false);
+
+  tap(Pins::MenuDown, menu);
+  tap(Pins::MenuDown, menu);
+  tap(Pins::MenuDown, menu);
+  tap(Pins::MenuSelect, menu);  // enter Set Time, field 0 = Hour
+  tap(Pins::MenuUp, menu);      // hour 7 -> 8
+  tap(Pins::MenuSelect, menu);  // -> field 1
+  tap(Pins::MenuSelect, menu);  // -> field 2 (Save)
+  tap(Pins::MenuSelect, menu);  // commit -- must not touch the (unavailable) rtc
+
+  TEST_ASSERT_EQUAL(kNow.hour(), rtc.now().hour());
+}
+
 void test_timezone_screen_cycles_selection() {
   AlarmClock alarms;
   alarms.begin();
@@ -308,6 +339,7 @@ int main(int argc, char **argv) {
   RUN_TEST(test_set_time_saves_the_new_hour_and_minute);
   RUN_TEST(test_set_time_cancelled_with_long_press_does_not_save);
   RUN_TEST(test_set_time_with_no_rtc_does_not_crash);
+  RUN_TEST(test_set_rtc_unavailable_skips_saving_even_with_a_non_null_rtc);
   RUN_TEST(test_timezone_screen_cycles_selection);
   return UNITY_END();
 }

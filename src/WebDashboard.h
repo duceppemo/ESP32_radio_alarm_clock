@@ -41,6 +41,13 @@ class WebDashboard {
   // Short human-readable summary for the on-device WiFi info screen.
   String statusLine() const;
 
+  // rtc is constructed and wired up before rtc->begin() is ever called (it's
+  // a global, initialized before setup() runs), so the constructor can't
+  // know yet whether the hardware actually responded -- call this once
+  // setup() finds out, so a non-null-but-non-functional rtc doesn't get
+  // treated as available.
+  void setRtcAvailable(bool available) { rtcAvailable_ = available; }
+
  private:
   bool connectStation(const String &ssid, const String &password);
   void startAccessPoint();
@@ -66,6 +73,7 @@ class WebDashboard {
   AlarmClock &alarms_;
   RadioTuner &radio_;
   RTC_DS3231 *rtc_;
+  bool rtcAvailable_ = true;
   BatteryMonitor *battery_;
   TimezoneStore &timezone_;
 

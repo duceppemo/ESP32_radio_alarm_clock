@@ -118,7 +118,7 @@ void WebDashboard::syncTimeFromNtp() {
   // doesn't retry every loop tick -- getLocalTime() below blocks for up to
   // 5s, which would otherwise stall the menu/web server on every iteration.
   lastNtpSyncMs_ = millis();
-  if (!rtc_) return;
+  if (!rtc_ || !rtcAvailable_) return;
 
   configTzTime(timezone_.posixString(), NetConfig::NtpServer);
   struct tm timeinfo;
@@ -167,7 +167,7 @@ void WebDashboard::registerRoutes() {
 
   server_.on("/api/alarm/snooze", HTTP_POST, [this](AsyncWebServerRequest *request) {
     if (!requireAuth(request)) return;
-    if (rtc_) alarms_.snooze(rtc_->now());
+    if (rtc_ && rtcAvailable_) alarms_.snooze(rtc_->now());
     request->send(200, "application/json", "{\"ok\":true}");
   });
 
@@ -316,7 +316,7 @@ String WebDashboard::buildStatusJson() {
     doc["dashboardUsername"] = adminUsername_;
     doc["dashboardPassword"] = adminPassword_;
   }
-  if (rtc_) {
+  if (rtc_ && rtcAvailable_) {
     DateTime now = rtc_->now();
     char buf[9];
     snprintf(buf, sizeof(buf), "%02d:%02d:%02d", now.hour(), now.minute(), now.second());
