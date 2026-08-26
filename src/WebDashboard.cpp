@@ -9,6 +9,7 @@
 #include <time.h>
 
 #include "DashboardPage.h"
+#include "StateLock.h"
 
 namespace {
 constexpr const char *kWifiNamespace = "wifi";
@@ -79,6 +80,8 @@ void WebDashboard::begin() {
 }
 
 void WebDashboard::update() {
+  // No StateLock here -- this is only ever called from main.cpp's loop(),
+  // which already holds one for the whole iteration (see StateLock.h).
   if (restartAtMs_ != 0 && millis() >= restartAtMs_) {
     ESP.restart();
   }
@@ -90,6 +93,8 @@ void WebDashboard::update() {
 }
 
 String WebDashboard::statusLine() const {
+  // No StateLock here -- only ever called from main.cpp's loop(), which
+  // already holds one (see StateLock.h / WebDashboard::update()).
   if (apMode_) {
     return String("AP: ") + NetConfig::ApSsid + "\n" + WiFi.softAPIP().toString();
   }
@@ -114,6 +119,11 @@ void WebDashboard::startAccessPoint() {
 }
 
 void WebDashboard::syncTimeFromNtp() {
+  // No StateLock here -- only called from begin() (single-threaded, before
+  // server_.begin() even starts serving requests), update() (already
+  // locked, called only from loop()), and two route handlers (already
+  // locked, see StateLock.h).
+  //
   // Marked "attempted" up front so a failed sync (e.g. no internet upstream)
   // doesn't retry every loop tick -- getLocalTime() below blocks for up to
   // 5s, which would otherwise stall the menu/web server on every iteration.
@@ -131,47 +141,56 @@ void WebDashboard::syncTimeFromNtp() {
 
 void WebDashboard::registerRoutes() {
   server_.on("/", HTTP_GET, [this](AsyncWebServerRequest *request) {
+    StateLock lock;
     if (!requireAuth(request)) return;
     request->send(200, "text/html", kDashboardHtml);
   });
 
   server_.on("/api/status", HTTP_GET, [this](AsyncWebServerRequest *request) {
+    StateLock lock;
     if (!requireAuth(request)) return;
     request->send(200, "application/json", buildStatusJson());
   });
 
   server_.on("/api/radio", HTTP_GET, [this](AsyncWebServerRequest *request) {
+    StateLock lock;
     if (!requireAuth(request)) return;
     request->send(200, "application/json", buildRadioJson());
   });
 
   server_.on("/api/alarms", HTTP_GET, [this](AsyncWebServerRequest *request) {
+    StateLock lock;
     if (!requireAuth(request)) return;
     request->send(200, "application/json", buildAlarmsJson());
   });
 
   server_.on("/api/settings", HTTP_GET, [this](AsyncWebServerRequest *request) {
+    StateLock lock;
     if (!requireAuth(request)) return;
     request->send(200, "application/json", buildSettingsJson());
   });
 
   server_.on("/api/timezone", HTTP_GET, [this](AsyncWebServerRequest *request) {
+    StateLock lock;
     if (!requireAuth(request)) return;
     request->send(200, "application/json", buildTimezoneJson());
   });
 
   server_.on("/api/security", HTTP_GET, [this](AsyncWebServerRequest *request) {
+    StateLock lock;
     if (!requireAuth(request)) return;
     request->send(200, "application/json", buildSecurityJson());
   });
 
   server_.on("/api/alarm/snooze", HTTP_POST, [this](AsyncWebServerRequest *request) {
+    StateLock lock;
     if (!requireAuth(request)) return;
     if (rtc_ && rtcAvailable_) alarms_.snooze(rtc_->now());
     request->send(200, "application/json", "{\"ok\":true}");
   });
 
   server_.on("/api/alarm/dismiss", HTTP_POST, [this](AsyncWebServerRequest *request) {
+    StateLock lock;
     if (!requireAuth(request)) return;
     alarms_.dismiss();
     request->send(200, "application/json", "{\"ok\":true}");
@@ -179,6 +198,7 @@ void WebDashboard::registerRoutes() {
 
   auto *wifiHandler = new AsyncCallbackJsonWebHandler(
       "/api/wifi", [this](AsyncWebServerRequest *request, JsonVariant &json) {
+        StateLock lock;
         if (!requireAuth(request)) return;
         String ssid = json["ssid"] | "";
         String password = json["password"] | "";
@@ -195,6 +215,7 @@ void WebDashboard::registerRoutes() {
 
   auto *securityHandler = new AsyncCallbackJsonWebHandler(
       "/api/security", [this](AsyncWebServerRequest *request, JsonVariant &json) {
+        StateLock lock;
         if (!requireAuth(request)) return;
         String username = json["username"] | "";
         String password = json["password"] | "";
@@ -211,6 +232,7 @@ void WebDashboard::registerRoutes() {
 
   auto *alarmHandler = new AsyncCallbackJsonWebHandler(
       "/api/alarms", [this](AsyncWebServerRequest *request, JsonVariant &json) {
+        StateLock lock;
         if (!requireAuth(request)) return;
         int index = json["index"] | -1;
         if (index < 0 || index >= AlarmClock::count()) {
@@ -235,6 +257,7 @@ void WebDashboard::registerRoutes() {
 
   auto *radioHandler = new AsyncCallbackJsonWebHandler(
       "/api/radio", [this](AsyncWebServerRequest *request, JsonVariant &json) {
+        StateLock lock;
         if (!requireAuth(request)) return;
         String action = json["action"] | "";
         int value = json["value"] | 0;
@@ -270,6 +293,7 @@ void WebDashboard::registerRoutes() {
 
   auto *settingsHandler = new AsyncCallbackJsonWebHandler(
       "/api/settings", [this](AsyncWebServerRequest *request, JsonVariant &json) {
+        StateLock lock;
         if (!requireAuth(request)) return;
         if (applySettingsJson(json)) {
           if (!apMode_) syncTimeFromNtp();
@@ -283,6 +307,7 @@ void WebDashboard::registerRoutes() {
 
   auto *timezoneHandler = new AsyncCallbackJsonWebHandler(
       "/api/timezone", [this](AsyncWebServerRequest *request, JsonVariant &json) {
+        StateLock lock;
         if (!requireAuth(request)) return;
         int index = json["index"] | -1;
         if (index < 0 || index >= TimezoneStore::count()) {

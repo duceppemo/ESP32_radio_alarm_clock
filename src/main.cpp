@@ -15,6 +15,7 @@
 #include "MenuSystem.h"
 #include "RadioTuner.h"
 #include "SnoozeController.h"
+#include "StateLock.h"
 #include "TimezoneStore.h"
 #include "WakeController.h"
 #include "WebDashboard.h"
@@ -125,6 +126,11 @@ void setup() {
 }
 
 void loop() {
+  // Held for the whole iteration -- see StateLock.h. Keeps this entire
+  // function mutually exclusive with every WebDashboard route handler,
+  // which runs on AsyncTCP's own task, not this one.
+  StateLock lock;
+
   // Fast path: keeps menu button response, the web server, and any playing
   // alarm tone snappy.
   dashboard.update();
