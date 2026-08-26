@@ -17,7 +17,7 @@ Run these from PowerShell, not Git Bash. Git Bash's MSYS-style environment fails
 
 ## Testing
 
-Six modules' logic has real unit tests that run on the host machine — no ESP32 hardware needed:
+Seven modules' logic has real unit tests that run on the host machine — no ESP32 hardware needed:
 
 ```powershell
 pio test -e native
@@ -33,6 +33,7 @@ This needs a native C/C++ toolchain (MinGW-w64, via `winget install BrechtSander
 | `test/test_snooze_controller/` | The physical snooze button's dual behavior: snoozes a ringing/snoozed alarm (and doesn't also touch the radio's sleep timer while doing so), otherwise toggles the radio's sleep timer on/off if the radio is on, and does nothing if the radio's off. |
 | `test/test_menu_system/` | The button-driven screen/state machine, end to end: short/long press, field-by-field alarm editing (including discarding on cancel), Radio-screen tune/mute, the ringing-alarm snooze/dismiss shortcut on Home, the Set Time screen (saves the right hour/minute while preserving the date, cancel discards it, a null `rtc_` doesn't crash), and the Timezone screen (up/down cycles the selection, long-press backs out without losing it). Since `MenuSystem`'s screen/cursor state is private by design, these drive full interaction sequences via simulated button presses and assert on the resulting `AlarmClock`/`RadioTuner`/`RTC_DS3231`/`TimezoneStore` state, the same way a real user's presses would. |
 | `test/test_timezone_store/` | The curated timezone list: defaults to UTC, `next()`/`previous()` step by one and wrap at both ends, an out-of-range `setIndex()` falls back to UTC instead of leaving stale state, the selection persists across instances (NVS-backed), and every entry has a non-empty label and POSIX TZ string. |
+| `test/test_display_dimmer/` | The lux-to-brightness curve: clamps to minimum at/below the dim threshold and maximum at/above the bright threshold (including out-of-range negative lux), interpolates correctly at the midpoint, and never decreases as lux increases. |
 
 The `[env:native]` build only compiles the `src/*.cpp` files listed in `build_src_filter` — `WebDashboard` isn't among them and isn't covered: it depends on `ESPAsyncWebServer`/`WiFi`/`ESPmDNS`, and its actual logic is mostly JSON marshaling coupled directly to request/response objects, so faking that stack well enough to test route handlers would be a much bigger, more fragile undertaking for comparatively little payoff versus the other modules here.
 
@@ -53,6 +54,7 @@ The `[env:native]` build only compiles the `src/*.cpp` files listed in `build_sr
 | [`src/RadioTuner.*`](../src/RadioTuner.h) | Wraps the [PU2CLR SI4735](https://github.com/pu2clr/SI4735) driver for the onboard SI4730 FM tuner: tune/seek/volume/mute, 6 presets, a sleep timer, all persisted to NVS (except the sunrise-ramp's intermediate volume steps, which use a transient setter that skips the flash write). This is control only, over I2C — see the audio-path note below. |
 | [`src/AlarmSound.*`](../src/AlarmSound.h) | Drives a piezo buzzer on `Pins::Buzzer` via Arduino's `tone()`/`noTone()`, stepping through a small pattern table: an urgent 1.8/2.2kHz alternating beep, or a gentler ascending A-major-triad chime (A5→C♯6→E6). Used both as a selectable wake sound and as the dead-air fallback below. Entirely unrelated to the radio's audio path. |
 | [`src/BatteryMonitor.*`](../src/BatteryMonitor.h) | Wraps the onboard MAX17048 LiPoly fuel gauge (I2C, address 0x36) for voltage/percent/low-battery. |
+| [`src/DisplayDimmer.*`](../src/DisplayDimmer.h) | Pure math: maps a VEML7700 lux reading to a TFT backlight PWM duty cycle (0-255, never fully off) and a 7-segment brightness level (0-15, the HT16K33's native range), linearly interpolated between `DisplayConfig::DimLuxThreshold`/`BrightLuxThreshold`. `main.cpp` calls it once a second and applies the result via `analogWrite(TFT_BACKLITE, ...)` / `Adafruit_7segment::setBrightness()`. |
 | [`src/TimezoneStore.*`](../src/TimezoneStore.h) | A curated list of timezones (label + POSIX TZ string, DST rule included where applicable), persisted to NVS via `Preferences`. Selectable from the TFT menu's Timezone screen or the dashboard's Time zone dropdown; `WebDashboard` feeds the selected POSIX string into `configTzTime()` on every NTP sync, so it's the single source of truth for local time — nothing is hardcoded. |
 | [`src/WakeController.*`](../src/WakeController.h) | Pure orchestration, owns nothing: watches `AlarmClock`'s state and, per the ringing alarm's `WakeSource`, either ramps `RadioTuner`'s volume up over `AlarmConfig::WakeRampSeconds` (falling back to `AlarmSound` if the station turns out to be dead air) or plays the selected tone directly. |
 | [`src/SnoozeController.*`](../src/SnoozeController.h) | Pure orchestration, owns nothing: the physical snooze button (`Pins::SnoozeButton`) does different things depending on context — snoozes a ringing/snoozed alarm, or (if idle and the radio is on) toggles `RadioTuner`'s sleep timer on/off at `RadioConfig::DefaultSleepTimerMinutes`. Does nothing if idle and the radio's off/muted. |
@@ -100,7 +102,7 @@ Each alarm picks a `WakeSource`: **Radio** ramps `RadioTuner`'s volume from `Ala
 
 ## Known gaps
 
-- VEML7700-driven display auto-dimming has a working driver (`BatteryMonitor`-style bring-up check) but nothing actually dims the TFT/7-segment displays from its readings yet.
 - The `Config.h` pin assignments (including the buzzer) and the SI4735 reset-pin timing are unverified against real wiring.
 - The dead-air RSSI threshold (`AlarmConfig::DeadAirRssiThreshold`) is a guess and will need retuning once there's a real signal to measure.
 - The buzzer tone frequencies/pattern (`AlarmSound.cpp`) are a best guess at what sounds good on a typical passive piezo — worth listening to and retuning once hardware exists.
+- `DisplayDimmer`'s lux thresholds (`DisplayConfig::DimLuxThreshold`/`BrightLuxThreshold`) and brightness floors are guesses, same as the RSSI threshold above — untested against a real room or a real TFT/7-segment's actual visible range.

@@ -79,3 +79,20 @@ constexpr const char *DefaultAdminUsername = "admin";
 namespace BatteryConfig {
 constexpr uint8_t LowPercentThreshold = 15;
 }  // namespace BatteryConfig
+
+namespace DisplayConfig {
+// Ambient-light thresholds (VEML7700 lux reading) the auto-dim curve is
+// linear between -- at/below Dim, displays sit at their minimum; at/above
+// Bright, full brightness. Unverified against a real room; expect to retune
+// once hardware exists, same as the dead-air RSSI threshold.
+constexpr float DimLuxThreshold = 5.0f;
+constexpr float BrightLuxThreshold = 200.0f;
+
+// TFT backlight is PWM-driven (0-255); never fully off so the clock stays
+// readable in a dark room. 7-segment brightness is the HT16K33's native
+// 0-15 range.
+constexpr uint8_t MinTftBacklight = 20;
+constexpr uint8_t MaxTftBacklight = 255;
+constexpr uint8_t MinSevenSegmentBrightness = 1;
+constexpr uint8_t MaxSevenSegmentBrightness = 15;
+}  // namespace DisplayConfig

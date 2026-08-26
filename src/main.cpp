@@ -11,6 +11,7 @@
 #include "BatteryMonitor.h"
 #include "Config.h"
 #include "DebouncedButton.h"
+#include "DisplayDimmer.h"
 #include "MenuSystem.h"
 #include "RadioTuner.h"
 #include "SnoozeController.h"
@@ -60,6 +61,11 @@ void setup() {
 
   pinMode(TFT_I2C_POWER, OUTPUT);
   digitalWrite(TFT_I2C_POWER, HIGH);
+
+  // Backlight is PWM-driven so the auto-dim loop below can vary it; start
+  // at full brightness for the bring-up status screen.
+  pinMode(TFT_BACKLITE, OUTPUT);
+  analogWrite(TFT_BACKLITE, DisplayConfig::MaxTftBacklight);
 
   tft.init(135, 240);
   tft.setRotation(3);
@@ -147,6 +153,9 @@ void loop() {
   }
 
   if (lightSensorOk) {
-    Serial.printf("Ambient lux: %.1f\n", lightSensor.readLux());
+    float lux = lightSensor.readLux();
+    Serial.printf("Ambient lux: %.1f\n", lux);
+    analogWrite(TFT_BACKLITE, DisplayDimmer::tftBacklightFor(lux));
+    if (sevenSegmentOk) sevenSegment.setBrightness(DisplayDimmer::sevenSegmentBrightnessFor(lux));
   }
 }

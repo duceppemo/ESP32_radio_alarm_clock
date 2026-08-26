@@ -22,7 +22,6 @@
 - [Firmware](#firmware)
 - [Getting started](#getting-started)
 - [Controls](#controls)
-- [Roadmap](#roadmap)
 - [Enclosure](#enclosure)
 - [License](#license)
 
@@ -40,6 +39,7 @@ Off-the-shelf radio alarm clocks are either dumb (no scheduling beyond one or tw
 - **OTA firmware updates** — reflash over WiFi from the dashboard once it's built and sealed up.
 - **Real battery monitoring** — an onboard fuel-gauge chip (MAX17048), not a voltage-divider guess.
 - **NTP time sync with a selectable timezone** — corrects the RTC automatically once on WiFi, so it doesn't slowly drift; pick your timezone (DST rule included) from the on-device menu or the dashboard, nothing hardcoded.
+- **Auto-dimming** — the ambient light sensor (VEML7700) fades the TFT backlight and 7-segment display down in a dark room and back up in daylight, never fully off.
 - **On-device menu** — full control from the built-in color TFT and three buttons, no phone required.
 - **One button, two jobs** — the snooze button snoozes a ringing alarm; press it while just listening to the radio and it instead starts (or cancels) a sleep timer, shown with a live countdown on the TFT.
 
@@ -73,9 +73,9 @@ See [`docs/wiring-diagram.html`](docs/wiring-diagram.html) for wiring notes/assu
 
 ## Firmware
 
-A PlatformIO project targeting the ESP32-S3 via the [pioarduino](https://github.com/pioarduino/platform-espressif32) platform fork. Covers alarm scheduling (sunrise ramp + dead-air fallback), FM radio control, an on-device TFT menu, battery monitoring, NTP time sync, OTA updates, and the WiFi setup/status web dashboard.
+A PlatformIO project targeting the ESP32-S3 via the [pioarduino](https://github.com/pioarduino/platform-espressif32) platform fork. Covers alarm scheduling (sunrise ramp + dead-air fallback), FM radio control, an on-device TFT menu, battery monitoring, NTP time sync, auto-dimming, OTA updates, and the WiFi setup/status web dashboard.
 
-It builds clean and its hardware-independent logic (alarm scheduling, radio wrapper, wake orchestration, on-device menu, the snooze button's dual behavior, timezone selection) has 50 passing unit tests that run on every push — see the CI badge above — but it hasn't been flashed to real hardware yet, since none of the parts have arrived. See [`docs/firmware.md`](docs/firmware.md) for the module architecture, build/flash instructions, the dashboard's API, and current known gaps.
+It builds clean and its hardware-independent logic (alarm scheduling, radio wrapper, wake orchestration, on-device menu, the snooze button's dual behavior, timezone selection, the auto-dim brightness curve) has 55 passing unit tests that run on every push — see the CI badge above — but it hasn't been flashed to real hardware yet, since none of the parts have arrived. See [`docs/firmware.md`](docs/firmware.md) for the module architecture, build/flash instructions, the dashboard's API, and current known gaps.
 
 ## Getting started
 
@@ -96,10 +96,6 @@ It builds clean and its hardware-independent logic (alarm scheduling, radio wrap
 - **Volume**: two low-profile panel-mount tactile buttons (Vol+/Vol−) — flush with the enclosure, no protruding knob.
 - **Power**: inline SPDT slide switch on the battery line for a hard on/off.
 - **Menu**: more advanced settings/controls are handled via an on-screen menu on the Feather's built-in TFT, navigated using the Feather's onboard buttons — including alarm scheduling, radio tuning, manually setting the time (handy before WiFi/NTP is set up, or if it's ever unreachable), and picking a timezone from a curated list.
-
-## Roadmap
-
-- **Auto-dimming**: use the VEML7700 ambient light reading to dim the 7-segment and TFT displays automatically.
 
 ## Enclosure
 
