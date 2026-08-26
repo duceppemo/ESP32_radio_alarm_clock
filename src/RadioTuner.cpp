@@ -77,6 +77,16 @@ void RadioTuner::recallPreset(uint8_t index) {
 }
 
 void RadioTuner::setSleepTimer(uint16_t minutes) {
+  if (minutes == 0) {
+    // Callers are expected to route 0 to cancelSleepTimer() themselves, but
+    // an int-to-uint16_t truncation upstream (e.g. the dashboard casting a
+    // JSON value of 65536) can land here with 0 anyway. Without this guard,
+    // millis() + 0 is still a nonzero "deadline" already in the past, so the
+    // very next update() would mute the radio immediately instead of
+    // leaving the sleep timer inactive.
+    cancelSleepTimer();
+    return;
+  }
   minutes = min(minutes, RadioConfig::MaxSleepTimerMinutes);
   sleepTimerEndMs_ = millis() + (uint32_t)minutes * 60000UL;
 }

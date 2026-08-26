@@ -139,6 +139,26 @@ void test_cancel_sleep_timer_prevents_auto_mute() {
   TEST_ASSERT_FALSE(radio.muted());
 }
 
+void test_set_sleep_timer_to_zero_behaves_like_cancel() {
+  RadioTuner radio;
+  radio.begin();
+  radio.setMuted(false);
+
+  native_fake_millis_value() = 0;
+  // Regression: an int-to-uint16_t truncation upstream (e.g. the dashboard
+  // casting a JSON value of 65536) can land here with exactly 0 even though
+  // the caller meant to arm a timer, not cancel one. millis() + 0 used to be
+  // treated as a valid (already-past) deadline, muting on the very next
+  // update() instead of leaving the timer inactive.
+  radio.setSleepTimer(0);
+
+  TEST_ASSERT_FALSE(radio.sleepTimerActive());
+
+  native_fake_millis_value() = 1;
+  radio.update();
+  TEST_ASSERT_FALSE(radio.muted());
+}
+
 void test_rssi_reflects_simulated_signal() {
   RadioTuner radio;
   radio.begin();
@@ -161,6 +181,7 @@ int main(int argc, char **argv) {
   RUN_TEST(test_sleep_timer_mutes_only_after_it_elapses);
   RUN_TEST(test_sleep_timer_remaining_minutes_is_exact_at_the_boundary);
   RUN_TEST(test_cancel_sleep_timer_prevents_auto_mute);
+  RUN_TEST(test_set_sleep_timer_to_zero_behaves_like_cancel);
   RUN_TEST(test_rssi_reflects_simulated_signal);
   return UNITY_END();
 }
