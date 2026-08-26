@@ -15,7 +15,18 @@ jobs:
         with:
           python-version: "3.x"
       - run: pip install platformio
-      - run: pio run -e adafruit_feather_esp32s3_reversetft
+      # PlatformIO's package registry occasionally drops a download mid-fetch
+      # (HTTPClientError / ConnectionResetError, seen more than once on this
+      # repo) with no code involved -- retry a few times before treating it
+      # as a real failure so a registry hiccup doesn't show up as a red X on
+      # a genuinely passing commit.
+      - run: |
+          for i in 1 2 3; do
+            pio run -e adafruit_feather_esp32s3_reversetft && exit 0
+            echo "Attempt $i failed, retrying in 15s..."
+            sleep 15
+          done
+          exit 1
 
   native-tests:
     name: Native unit tests
@@ -26,4 +37,10 @@ jobs:
         with:
           python-version: "3.x"
       - run: pip install platformio
-      - run: pio test -e native
+      - run: |
+          for i in 1 2 3; do
+            pio test -e native && exit 0
+            echo "Attempt $i failed, retrying in 15s..."
+            sleep 15
+          done
+          exit 1
