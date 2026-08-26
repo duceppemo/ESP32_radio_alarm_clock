@@ -219,6 +219,39 @@ void test_dismissing_a_tone_wake_stops_the_tone_but_leaves_radio_muted() {
   TEST_ASSERT_TRUE(radio.muted());  // deliberately left as-is, not this controller's job
 }
 
+void test_dismissing_a_tone_wake_stops_immediately_via_tick_fast() {
+  // Regression: beginWake()/endWake() detection used to live only in
+  // tickSlow(), which main.cpp only calls once a second -- a beep/chime
+  // dismissed via a fast-path action (the menu's Home shortcut, the
+  // dashboard's /api/alarm/dismiss) would keep sounding for up to that long
+  // after AlarmClock's state had already gone back to Idle. tickFast()
+  // (called every loop iteration, unthrottled) must notice and silence it
+  // immediately, without waiting for the next tickSlow().
+  AlarmClock clock;
+  clock.begin();
+  RadioTuner radio;
+  radio.begin();
+  AlarmSound sound;
+  sound.begin();
+  WakeController wake(clock, radio, sound);
+
+  Alarm a;
+  a.hour = 7;
+  a.minute = 0;
+  a.enabled = true;
+  a.daysMask = 0b1111111;
+  a.wakeSource = WakeSource::ClassicBeep;
+
+  ring(clock, a);
+  wake.tickSlow(DateTime(2026, 8, 25, 7, 0, 0));
+  TEST_ASSERT_TRUE(sound.active());
+
+  clock.dismiss();
+  wake.tickFast();  // no tickSlow() call at all -- must still stop the tone
+
+  TEST_ASSERT_FALSE(sound.active());
+}
+
 void test_snoozing_ends_wake_and_re_ring_restarts_the_ramp() {
   AlarmClock clock;
   clock.begin();
@@ -266,6 +299,7 @@ int main(int argc, char **argv) {
   RUN_TEST(test_chime_wake_selects_the_chime_tone);
   RUN_TEST(test_dismissing_a_radio_wake_restores_volume_and_unmutes);
   RUN_TEST(test_dismissing_a_tone_wake_stops_the_tone_but_leaves_radio_muted);
+  RUN_TEST(test_dismissing_a_tone_wake_stops_immediately_via_tick_fast);
   RUN_TEST(test_snoozing_ends_wake_and_re_ring_restarts_the_ramp);
   return UNITY_END();
 }

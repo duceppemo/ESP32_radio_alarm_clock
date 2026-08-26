@@ -4,16 +4,8 @@ WakeController::WakeController(AlarmClock &alarms, RadioTuner &radio, AlarmSound
     : alarms_(alarms), radio_(radio), sound_(sound) {}
 
 void WakeController::tickSlow(const DateTime &now) {
-  AlarmState state = alarms_.state();
-  bool nowRinging = state == AlarmState::Ringing;
-  bool wasRinging = lastState_ == AlarmState::Ringing;
-
-  if (nowRinging && !wasRinging) {
-    beginWake();
-  } else if (!nowRinging && wasRinging) {
-    endWake();
-  }
-  lastState_ = state;
+  (void)now;  // ramp/dead-air timing below is all millis()-based
+  detectRingTransition();
 
   if (!wakeActive_ || lastWakeSource_ != WakeSource::Radio) return;
 
@@ -36,7 +28,23 @@ void WakeController::tickSlow(const DateTime &now) {
   }
 }
 
-void WakeController::tickFast() { sound_.update(); }
+void WakeController::tickFast() {
+  detectRingTransition();
+  sound_.update();
+}
+
+void WakeController::detectRingTransition() {
+  AlarmState state = alarms_.state();
+  bool nowRinging = state == AlarmState::Ringing;
+  bool wasRinging = lastState_ == AlarmState::Ringing;
+
+  if (nowRinging && !wasRinging) {
+    beginWake();
+  } else if (!nowRinging && wasRinging) {
+    endWake();
+  }
+  lastState_ = state;
+}
 
 void WakeController::beginWake() {
   wakeActive_ = true;

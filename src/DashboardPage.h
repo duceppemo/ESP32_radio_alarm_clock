@@ -121,7 +121,10 @@ async function api(path, options) {
 
 const wakeSources = [['radio', 'Radio'], ['beep', 'Beep'], ['chime', 'Chime']];
 
+let rebooting = false;
+
 async function refresh() {
+  if (rebooting) return;
   try {
     const status = await api('/api/status');
     const battery = status.batteryPercent === undefined ? '' :
@@ -209,6 +212,10 @@ async function refresh() {
 async function saveWifi() {
   await api('/api/wifi', { method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ssid: document.getElementById('wifiSsid').value, password: document.getElementById('wifiPassword').value }) });
+  // The device waits ~1.5s before actually rebooting, so without this the
+  // next periodic poll could land in that window and flicker this message
+  // back to a stale status right before the connection drops anyway.
+  rebooting = true;
   document.getElementById('statusLine').textContent = 'Saved. Rebooting to join network...';
 }
 

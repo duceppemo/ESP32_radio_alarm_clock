@@ -16,12 +16,21 @@ class WakeController {
   WakeController(AlarmClock &alarms, RadioTuner &radio, AlarmSound &sound);
 
   // Call once a second with the current time: drives the ramp and the
-  // dead-air check, and detects when a ring/re-ring starts or ends.
+  // dead-air check. Also detects a ring/re-ring starting or ending, same as
+  // tickFast() -- see that method for why both need to.
   void tickSlow(const DateTime &now);
-  // Call every loop() iteration: keeps AlarmSound fed while it's playing.
+  // Call every loop() iteration: keeps AlarmSound fed while it's playing,
+  // and detects a ring/re-ring starting or ending. That detection also
+  // happens (redundantly but harmlessly -- it's idempotent against
+  // lastState_) in tickSlow(), which is throttled to once a second in
+  // main.cpp; without it here too, dismissing/snoozing a beep/chime alarm
+  // via a fast-path action (the menu's Home shortcut, the dashboard's
+  // /api/alarm/dismiss) would leave the buzzer sounding for up to a second
+  // after AlarmClock's state had already gone back to Idle.
   void tickFast();
 
  private:
+  void detectRingTransition();
   void beginWake();
   void endWake();
 
