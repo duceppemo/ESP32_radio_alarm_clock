@@ -11,6 +11,7 @@
 void setUp() {
   Preferences::resetAll();
   SI4735::resetSimulatedRssi();
+  SI4735::resetSimulatedPresent();
   native_fake_millis_value() = 1000;  // start away from 0 so debounce math is unambiguous
 }
 void tearDown() {}
@@ -134,6 +135,30 @@ void test_radio_screen_tune_up_and_mute() {
 
   tap(Pins::MenuSelect, menu);  // toggle mute
   TEST_ASSERT_TRUE(radio.muted());
+}
+
+void test_radio_screen_does_nothing_when_no_radio_is_present() {
+  AlarmClock alarms;
+  alarms.begin();
+  RadioTuner radio;
+  SI4735::setSimulatedPresent(false);
+  TEST_ASSERT_FALSE(radio.begin());
+  uint16_t startFreq = radio.frequency10kHz();
+  Adafruit_ST7789 tft(0, 0, 0);
+  TimezoneStore timezone;
+  timezone.begin();
+  MenuSystem menu(tft, alarms, radio, nullptr, nullptr, timezone);
+  menu.begin();
+
+  tap(Pins::MenuDown, menu);    // Home cursor: Alarms(0) -> Radio(1)
+  tap(Pins::MenuSelect, menu);  // enter Radio screen
+  tap(Pins::MenuUp, menu);      // would tune up, if a radio were present
+  tap(Pins::MenuSelect, menu);  // would toggle mute, if a radio were present
+
+  TEST_ASSERT_EQUAL(startFreq, radio.frequency10kHz());
+  TEST_ASSERT_FALSE(radio.muted());
+
+  hold(Pins::MenuSelect, menu);  // long-press back to Home still works
 }
 
 void test_ringing_alarm_short_press_snoozes() {
@@ -334,6 +359,7 @@ int main(int argc, char **argv) {
   RUN_TEST(test_editing_hour_and_minute_then_saving);
   RUN_TEST(test_cancelling_an_edit_with_long_press_discards_changes);
   RUN_TEST(test_radio_screen_tune_up_and_mute);
+  RUN_TEST(test_radio_screen_does_nothing_when_no_radio_is_present);
   RUN_TEST(test_ringing_alarm_short_press_snoozes);
   RUN_TEST(test_ringing_alarm_long_press_dismisses);
   RUN_TEST(test_set_time_saves_the_new_hour_and_minute);

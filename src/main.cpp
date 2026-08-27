@@ -118,7 +118,7 @@ void setup() {
   pinMode(Pins::SnoozeButton, INPUT_PULLUP);
 
   alarmClock.begin();
-  radioTuner.begin();
+  reportStatus("Radio (SI4730)", radioTuner.begin());
   menu.begin();
   dashboard.begin();  // may take a few seconds: WiFi connect attempt + NTP sync
 

@@ -8,8 +8,11 @@ constexpr const char *kVolumeKey = "volume";
 constexpr const char *kFreqKey = "freq";
 }  // namespace
 
-void RadioTuner::begin(uint8_t resetPin) {
+bool RadioTuner::begin(uint8_t resetPin) {
   load();
+
+  available_ = si4735_.getDeviceI2CAddress(resetPin) != 0;
+  if (!available_) return false;
 
   si4735_.setup(resetPin, FM_CURRENT_MODE);
   si4735_.setFM(RadioConfig::FmBandStart, RadioConfig::FmBandEnd,
@@ -21,6 +24,7 @@ void RadioTuner::begin(uint8_t resetPin) {
   uint16_t lastFreq = prefs.getUShort(kFreqKey, RadioConfig::FmDefaultFreq);
   prefs.end();
   tune(lastFreq);
+  return true;
 }
 
 void RadioTuner::tune(uint16_t frequency10kHz) {

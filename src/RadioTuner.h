@@ -10,7 +10,14 @@
 // have to poke the underlying library's raw 10 kHz units directly.
 class RadioTuner {
  public:
-  void begin(uint8_t resetPin = Pins::RadioReset);
+  // Returns false if no SI4730/35 responded on the I2C bus at either its
+  // known address -- e.g. the module isn't wired up yet. Callers should
+  // check available() before trusting anything below to reflect a real
+  // chip; the setters still won't crash if called anyway (they just talk
+  // to a driver object backed by nothing), but frequency10kHz()/rssi()/etc.
+  // won't mean anything either.
+  bool begin(uint8_t resetPin = Pins::RadioReset);
+  bool available() const { return available_; }
 
   void tune(uint16_t frequency10kHz);
   void seekUp();
@@ -50,6 +57,7 @@ class RadioTuner {
   void load();
 
   SI4735 si4735_;
+  bool available_ = false;
   uint8_t volume_ = RadioConfig::DefaultVolume;
   bool muted_ = false;
   uint16_t presets_[RadioConfig::MaxPresets] = {};

@@ -166,9 +166,11 @@ void MenuSystem::handleInput(const DateTime &now) {
     }
 
     case MenuScreen::Radio: {
-      if (up) radio_.tune(radio_.frequency10kHz() + RadioConfig::FmStep);
-      if (down) radio_.tune(radio_.frequency10kHz() - RadioConfig::FmStep);
-      if (shortPress) radio_.setMuted(!radio_.muted());
+      if (radio_.available()) {
+        if (up) radio_.tune(radio_.frequency10kHz() + RadioConfig::FmStep);
+        if (down) radio_.tune(radio_.frequency10kHz() - RadioConfig::FmStep);
+        if (shortPress) radio_.setMuted(!radio_.muted());
+      }
       if (longPress) screen_ = MenuScreen::Home;
       break;
     }
@@ -275,7 +277,11 @@ void MenuSystem::renderHome(const DateTime &now) {
     if (alarms_.alarm(i).enabled) anyEnabled = true;
   }
   tft_.println(anyEnabled ? "Alarms set" : "No alarms set");
-  tft_.printf("FM %.1f MHz\n", radio_.frequencyMHz());
+  if (radio_.available()) {
+    tft_.printf("FM %.1f MHz\n", radio_.frequencyMHz());
+  } else {
+    tft_.println("No radio");
+  }
   if (radio_.sleepTimerActive()) {
     tft_.printf("Sleep timer: %um\n", radio_.sleepTimerRemainingMinutes());
   }
@@ -341,6 +347,13 @@ void MenuSystem::renderAlarmEdit() {
 void MenuSystem::renderRadio() {
   tft_.println("Radio");
   tft_.println();
+  if (!radio_.available()) {
+    tft_.println("No radio module");
+    tft_.println("detected on I2C.");
+    tft_.println();
+    tft_.println("hold: back");
+    return;
+  }
   tft_.setTextSize(2);
   tft_.printf("%.1f MHz\n", radio_.frequencyMHz());
   tft_.setTextSize(1);

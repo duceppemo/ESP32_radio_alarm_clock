@@ -17,6 +17,16 @@
 // reach its private SI4735 member.
 class SI4735 {
  public:
+  // Real library scans the I2C bus for the chip at 0x11/0x63 and returns 0
+  // if neither responds -- RadioTuner::begin() uses that to detect whether
+  // the module is actually wired up before touching anything else.
+  int16_t getDeviceI2CAddress(uint8_t resetPin) {
+    (void)resetPin;
+    return simulatedPresent() ? 0x11 : 0;
+  }
+  static void setSimulatedPresent(bool present) { simulatedPresent() = present; }
+  static void resetSimulatedPresent() { simulatedPresent() = true; }  // default: chip present
+
   void setup(uint8_t resetPin, uint8_t defaultFunction) {
     (void)resetPin;
     (void)defaultFunction;
@@ -51,6 +61,10 @@ class SI4735 {
  private:
   static uint8_t &simulatedRssi() {
     static uint8_t v = 50;
+    return v;
+  }
+  static bool &simulatedPresent() {
+    static bool v = true;
     return v;
   }
 };

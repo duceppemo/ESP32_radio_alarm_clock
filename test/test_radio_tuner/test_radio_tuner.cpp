@@ -7,8 +7,24 @@
 void setUp() {
   Preferences::resetAll();
   SI4735::resetSimulatedRssi();
+  SI4735::resetSimulatedPresent();
 }
 void tearDown() {}
+
+void test_begin_reports_availability_when_the_chip_responds() {
+  RadioTuner radio;
+
+  TEST_ASSERT_TRUE(radio.begin());
+  TEST_ASSERT_TRUE(radio.available());
+}
+
+void test_begin_reports_unavailable_when_no_chip_responds() {
+  SI4735::setSimulatedPresent(false);
+  RadioTuner radio;
+
+  TEST_ASSERT_FALSE(radio.begin());
+  TEST_ASSERT_FALSE(radio.available());
+}
 
 void test_tune_clamps_to_fm_band_bounds() {
   RadioTuner radio;
@@ -171,6 +187,8 @@ int main(int argc, char **argv) {
   (void)argc;
   (void)argv;
   UNITY_BEGIN();
+  RUN_TEST(test_begin_reports_availability_when_the_chip_responds);
+  RUN_TEST(test_begin_reports_unavailable_when_no_chip_responds);
   RUN_TEST(test_tune_clamps_to_fm_band_bounds);
   RUN_TEST(test_set_volume_clamps_to_63);
   RUN_TEST(test_volume_up_and_down_stop_at_bounds);
