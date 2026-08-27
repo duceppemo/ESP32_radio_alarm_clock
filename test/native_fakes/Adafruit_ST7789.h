@@ -5,6 +5,8 @@
 constexpr uint16_t ST77XX_BLACK = 0x0000;
 constexpr uint16_t ST77XX_WHITE = 0xFFFF;
 constexpr uint16_t ST77XX_RED = 0xF800;
+constexpr uint16_t ST77XX_GREEN = 0x07E0;
+constexpr uint16_t ST77XX_ORANGE = 0xFD20;
 
 // Minimal native stand-in for Adafruit_ST7789 -- see Adafruit_GFX.h for why.
 class Adafruit_ST7789 : public Adafruit_GFX {

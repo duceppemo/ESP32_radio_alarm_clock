@@ -13,6 +13,16 @@ void setUp() {
   SI4735::resetSimulatedRssi();
   SI4735::resetSimulatedPresent();
   native_fake_millis_value() = 1000;  // start away from 0 so debounce math is unambiguous
+  // native_fake_digital_state() defaults every pin to HIGH (matching the
+  // active-low buttons' idle level), which is wrong for MenuUp/MenuDown --
+  // this board wires those two active-high, idle LOW. Left at the fake's
+  // default, a fresh DebouncedButton (stableState_ starts false/not-pressed)
+  // would see the real reading disagree with that on its very first update()
+  // call and register a spurious phantom press before the test ever touches
+  // the pin. Set every button pin to its actual idle level explicitly.
+  native_fake_digital_state(Pins::MenuSelect) = HIGH;
+  native_fake_digital_state(Pins::MenuUp) = LOW;
+  native_fake_digital_state(Pins::MenuDown) = LOW;
 }
 void tearDown() {}
 
@@ -21,7 +31,7 @@ const DateTime kNow(2026, 8, 25, 7, 0, 0);
 
 void advance(uint32_t deltaMs) { native_fake_millis_value() += deltaMs; }
 
-// Short press: pressed for less than MenuSystem's 600ms long-press threshold.
+// Short press: released well under MenuSystem's 1000ms long-press threshold.
 void tap(uint8_t pin, MenuSystem &menu) {
   native_fake_digital_state(pin) = LOW;
   advance(50);
@@ -31,15 +41,20 @@ void tap(uint8_t pin, MenuSystem &menu) {
   menu.update(kNow, "");
 }
 
-// Long press: held past the 600ms threshold before releasing.
+// Long press: fires the instant the hold crosses the 1000ms threshold --
+// while still held, not on release -- so the update() call after advancing
+// past it (button still down) is what triggers it. The final release-time
+// update() call should be a no-op (longPressFired_ latches until the next
+// fresh press), which is exactly what callers rely on this helper for.
 void hold(uint8_t pin, MenuSystem &menu) {
   native_fake_digital_state(pin) = LOW;
   advance(50);
-  menu.update(kNow, "");
-  advance(700);
+  menu.update(kNow, "");  // registers the press
+  advance(1050);
+  menu.update(kNow, "");  // still held -- long press fires here
   native_fake_digital_state(pin) = HIGH;
   advance(50);
-  menu.update(kNow, "");
+  menu.update(kNow, "");  // release -- latched, must not fire anything again
 }
 }  // namespace
 
@@ -112,6 +127,49 @@ void test_cancelling_an_edit_with_long_press_discards_changes() {
   hold(Pins::MenuSelect, menu);  // long press -> discard, back to AlarmList
 
   TEST_ASSERT_FALSE(alarms.alarm(0).enabled);  // never saved
+}
+
+void test_holding_through_a_long_press_screen_change_does_not_cascade_further() {
+  AlarmClock alarms;
+  alarms.begin();
+  RadioTuner radio;
+  radio.begin();
+  Adafruit_ST7789 tft(0, 0, 0);
+  TimezoneStore timezone;
+  timezone.begin();
+  MenuSystem menu(tft, alarms, radio, nullptr, nullptr, timezone);
+  menu.begin();
+
+  tap(Pins::MenuSelect, menu);  // Home -> AlarmList
+  tap(Pins::MenuSelect, menu);  // AlarmList (alarm 0) -> AlarmEdit
+
+  // Long press to cancel out of AlarmEdit (-> AlarmList), but drive it by
+  // hand instead of using hold() so the button stays down well past the
+  // point where the long press fires. AlarmList's own long press ALSO
+  // backs out (-> Home) -- without longPressFired_ latching until a fresh
+  // press, continuing to hold here would look identical to a second long
+  // press on AlarmList and cascade AlarmEdit -> AlarmList -> Home in one
+  // continuous hold, when only one "back" was intended.
+  native_fake_digital_state(Pins::MenuSelect) = LOW;
+  advance(50);
+  menu.update(kNow, "");  // press registers
+  advance(1050);
+  menu.update(kNow, "");  // long press fires once: AlarmEdit -> AlarmList
+  advance(500);
+  menu.update(kNow, "");  // still held -- must not cascade to Home
+  native_fake_digital_state(Pins::MenuSelect) = HIGH;
+  advance(50);
+  menu.update(kNow, "");  // release -- must not fire a short press either
+
+  // If we're actually still on AlarmList (no cascade), a fresh short tap
+  // re-enters AlarmEdit for alarm 0; toggle it on and save. Had a cascade
+  // to Home happened instead, this same tap sequence would be read as Home
+  // navigation and never reach AlarmEdit, so the alarm would never save.
+  tap(Pins::MenuSelect, menu);  // AlarmList (alarm 0) -> AlarmEdit
+  tap(Pins::MenuUp, menu);      // toggle Enabled: false -> true
+  for (int i = 0; i < 6; i++) tap(Pins::MenuSelect, menu);  // walk to Save, commit
+
+  TEST_ASSERT_TRUE(alarms.alarm(0).enabled);
 }
 
 void test_radio_screen_tune_up_and_mute() {
@@ -358,6 +416,7 @@ int main(int argc, char **argv) {
   RUN_TEST(test_toggling_an_alarm_enabled_through_the_full_edit_flow);
   RUN_TEST(test_editing_hour_and_minute_then_saving);
   RUN_TEST(test_cancelling_an_edit_with_long_press_discards_changes);
+  RUN_TEST(test_holding_through_a_long_press_screen_change_does_not_cascade_further);
   RUN_TEST(test_radio_screen_tune_up_and_mute);
   RUN_TEST(test_radio_screen_does_nothing_when_no_radio_is_present);
   RUN_TEST(test_ringing_alarm_short_press_snoozes);

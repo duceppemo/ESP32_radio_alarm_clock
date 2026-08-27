@@ -51,7 +51,35 @@ class Adafruit_GFX : public Print {
   }
   void setTextColor(uint16_t color) { (void)color; }
   void setTextSize(uint8_t size) { (void)size; }
+  void drawRGBBitmap(int16_t x, int16_t y, uint16_t *bitmap, int16_t w, int16_t h) {
+    (void)x;
+    (void)y;
+    (void)bitmap;
+    (void)w;
+    (void)h;
+  }
+  void drawFastHLine(int16_t x, int16_t y, int16_t w, uint16_t color) {
+    (void)x;
+    (void)y;
+    (void)w;
+    (void)color;
+  }
 
  private:
   int16_t width_, height_;
+};
+
+// Minimal stand-in for the off-screen-buffer companion class MenuSystem
+// composes each frame into before blitting it to the real display in one
+// shot. getBuffer() just needs to return a non-null pointer of the right
+// size -- nothing inspects its contents natively.
+class GFXcanvas16 : public Adafruit_GFX {
+ public:
+  GFXcanvas16(uint16_t w, uint16_t h) : Adafruit_GFX(w, h), buffer_(new uint16_t[w * h]) {}
+  ~GFXcanvas16() { delete[] buffer_; }
+
+  uint16_t *getBuffer() const { return buffer_; }
+
+ private:
+  uint16_t *buffer_;
 };

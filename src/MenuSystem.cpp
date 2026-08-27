@@ -40,7 +40,19 @@ WakeSource cycleWakeSource(WakeSource source, int8_t direction) {
 }
 
 constexpr uint8_t kHomeMenuItems = 5;  // AlarmList, Radio, WifiInfo, SetTime, Timezone
+
+// Dim gray for de-emphasized text (unselected menu items, "no radio" etc.) --
+// not one of Adafruit_ST77xx's named colors, so computed directly (RGB565,
+// ~mid-gray).
+constexpr uint16_t kDimGray = 0x8410;
 }  // namespace
+
+void MenuSystem::printBold(int16_t x, int16_t y, const char *text) {
+  canvas_.setCursor(x + 1, y);
+  canvas_.print(text);
+  canvas_.setCursor(x, y);
+  canvas_.print(text);
+}
 
 MenuSystem::MenuSystem(Adafruit_ST7789 &tft, AlarmClock &alarms, RadioTuner &radio,
                        BatteryMonitor *battery, RTC_DS3231 *rtc, TimezoneStore &timezone)
@@ -48,8 +60,10 @@ MenuSystem::MenuSystem(Adafruit_ST7789 &tft, AlarmClock &alarms, RadioTuner &rad
 
 void MenuSystem::begin() {
   pinMode(Pins::MenuSelect, INPUT_PULLUP);
-  pinMode(Pins::MenuUp, INPUT_PULLUP);
-  pinMode(Pins::MenuDown, INPUT_PULLUP);
+  // D1/D2 have their own external pull-down on this board -- INPUT_PULLUP
+  // here would fight it. See DebouncedButton's activeHigh for the read side.
+  pinMode(Pins::MenuUp, INPUT);
+  pinMode(Pins::MenuDown, INPUT);
 }
 
 void MenuSystem::update(const DateTime &now, const String &wifiStatusLine) {
@@ -62,17 +76,23 @@ void MenuSystem::update(const DateTime &now, const String &wifiStatusLine) {
 }
 
 void MenuSystem::handleInput(const DateTime &now) {
-  if (select_.justPressed()) selectPressedAtMs_ = millis();
+  if (select_.justPressed()) {
+    selectPressedAtMs_ = millis();
+    longPressFired_ = false;
+  }
 
   bool longPress = false;
   bool shortPress = false;
-  if (select_.justReleased()) {
-    uint32_t heldMs = millis() - selectPressedAtMs_;
-    if (heldMs >= kLongPressMs) {
-      longPress = true;
-    } else {
-      shortPress = true;
-    }
+  // Fires the instant the hold crosses the threshold, while the button is
+  // still down -- not on release -- so it's not confusing whether it
+  // registered. longPressFired_ latches until the next fresh press so it
+  // can only happen once per hold, and so the short-press branch below
+  // never also fires when the same hold is finally released.
+  if (select_.isDown() && !longPressFired_ && millis() - selectPressedAtMs_ >= kLongPressMs) {
+    longPress = true;
+    longPressFired_ = true;
+  } else if (select_.justReleased() && !longPressFired_) {
+    shortPress = true;
   }
 
   bool up = up_.justPressed();
@@ -221,10 +241,10 @@ void MenuSystem::render(const DateTime &now, const String &wifiStatusLine) {
   dirty_ = false;
   lastClockRedrawSec = now.second();
 
-  tft_.fillScreen(ST77XX_BLACK);
-  tft_.setCursor(0, 0);
-  tft_.setTextColor(ST77XX_WHITE);
-  tft_.setTextSize(1);
+  canvas_.fillScreen(ST77XX_BLACK);
+  canvas_.setCursor(0, 0);
+  canvas_.setTextColor(ST77XX_WHITE);
+  canvas_.setTextSize(1);
 
   switch (screen_) {
     case MenuScreen::Home:
@@ -249,169 +269,195 @@ void MenuSystem::render(const DateTime &now, const String &wifiStatusLine) {
       renderTimezone();
       break;
   }
+
+  // One SPI transfer of the finished frame -- the display never shows an
+  // intermediate blank/partial state, so no flash.
+  tft_.drawRGBBitmap(0, 0, canvas_.getBuffer(), kMenuScreenWidth, kMenuScreenHeight);
 }
 
 void MenuSystem::renderHome(const DateTime &now) {
   if (alarms_.state() != AlarmState::Idle) {
-    tft_.setTextColor(ST77XX_RED);
-    tft_.println("** ALARM **");
-    tft_.setTextColor(ST77XX_WHITE);
+    canvas_.setTextSize(2);
+    canvas_.setTextColor(ST77XX_RED);
+    printBold(28, 0, "** ALARM **");
+
+    canvas_.setTextColor(ST77XX_WHITE);
     if (alarms_.ringingAlarmIndex() >= 0) {
       const Alarm &a = alarms_.alarm(alarms_.ringingAlarmIndex());
-      tft_.printf("%02d:%02d\n\n", a.hour, a.minute);
+      canvas_.setCursor(0, 26);
+      canvas_.printf("%02d:%02d", a.hour, a.minute);
     }
-    tft_.println(alarms_.state() == AlarmState::Snoozed ? "Snoozed" : "Ringing");
-    tft_.println();
-    tft_.println("tap: snooze");
-    tft_.println("hold: dismiss");
+
+    canvas_.setTextSize(1);
+    canvas_.setTextColor(ST77XX_ORANGE);
+    canvas_.setCursor(0, 54);
+    canvas_.println(alarms_.state() == AlarmState::Snoozed ? "Snoozed" : "Ringing");
+
+    canvas_.setTextColor(ST77XX_WHITE);
+    canvas_.setCursor(0, 90);
+    canvas_.println("tap: snooze");
+    canvas_.println("hold: dismiss");
     return;
   }
 
-  tft_.setTextSize(2);
-  tft_.printf("%02d:%02d:%02d\n", now.hour(), now.minute(), now.second());
-  tft_.setTextSize(1);
-  tft_.println();
+  // Big bold clock, centered: "HH:MM:SS" at size 3 is 8*18 = 144px wide.
+  canvas_.setTextSize(3);
+  canvas_.setTextColor(ST77XX_WHITE);
+  char clockBuf[9];
+  snprintf(clockBuf, sizeof(clockBuf), "%02d:%02d:%02d", now.hour(), now.minute(), now.second());
+  printBold(48, 4, clockBuf);
+
+  canvas_.drawFastHLine(10, 32, kMenuScreenWidth - 20, kDimGray);
+
+  canvas_.setTextSize(1);
+  canvas_.setCursor(0, 40);
 
   bool anyEnabled = false;
   for (uint8_t i = 0; i < AlarmClock::count(); i++) {
     if (alarms_.alarm(i).enabled) anyEnabled = true;
   }
-  tft_.println(anyEnabled ? "Alarms set" : "No alarms set");
-  if (radio_.available()) {
-    tft_.printf("FM %.1f MHz\n", radio_.frequencyMHz());
-  } else {
-    tft_.println("No radio");
-  }
-  if (radio_.sleepTimerActive()) {
-    tft_.printf("Sleep timer: %um\n", radio_.sleepTimerRemainingMinutes());
-  }
-  if (battery_ && battery_->available()) {
-    if (battery_->isLow()) tft_.setTextColor(ST77XX_RED);
-    tft_.printf("Battery: %.0f%%\n", battery_->percent());
-    tft_.setTextColor(ST77XX_WHITE);
-  }
-  tft_.println();
+  canvas_.println(anyEnabled ? "Alarms set" : "No alarms set");
 
+  canvas_.setTextColor(radio_.available() ? ST77XX_WHITE : kDimGray);
+  if (radio_.available()) {
+    canvas_.printf("FM %.1f MHz\n", radio_.frequencyMHz());
+  } else {
+    canvas_.println("No radio");
+  }
+
+  if (radio_.sleepTimerActive()) {
+    canvas_.setTextColor(ST77XX_ORANGE);
+    canvas_.printf("Sleep: %um\n", radio_.sleepTimerRemainingMinutes());
+  }
+
+  if (battery_ && battery_->available()) {
+    canvas_.setTextColor(battery_->isLow() ? ST77XX_RED : ST77XX_GREEN);
+    canvas_.printf("Battery: %.0f%%\n", battery_->percent());
+  }
+
+  // Pinned to a fixed row regardless of how many status lines are above it,
+  // so the nav bar doesn't jump around as alarms/radio/battery come and go.
+  canvas_.setCursor(0, 120);
   static const char *items[kHomeMenuItems] = {"Alarms", "Radio", "WiFi", "Time", "TZ"};
   for (uint8_t i = 0; i < kHomeMenuItems; i++) {
-    tft_.printf("%s%s  ", i == cursor_ ? ">" : " ", items[i]);
+    canvas_.setTextColor(i == cursor_ ? ST77XX_WHITE : kDimGray);
+    canvas_.printf("%s%s ", i == cursor_ ? ">" : " ", items[i]);
   }
-  tft_.println();
 }
 
 void MenuSystem::renderAlarmList() {
-  tft_.println("Alarms");
-  tft_.println();
+  canvas_.println("Alarms");
+  canvas_.println();
   for (uint8_t i = 0; i < AlarmClock::count(); i++) {
     const Alarm &a = alarms_.alarm(i);
-    tft_.printf("%s%02d:%02d %-3s %s\n", i == cursor_ ? ">" : " ", a.hour, a.minute,
+    canvas_.printf("%s%02d:%02d %-3s %s\n", i == cursor_ ? ">" : " ", a.hour, a.minute,
                 a.enabled ? "ON" : "off", daysLabel(a.daysMask));
   }
-  tft_.println();
-  tft_.println("tap: edit  hold: back");
+  canvas_.println();
+  canvas_.println("tap: edit  hold: back");
 }
 
 void MenuSystem::renderAlarmEdit() {
-  tft_.printf("Edit alarm %u\n\n", cursor_ + 1);
+  canvas_.printf("Edit alarm %u\n\n", cursor_ + 1);
 
   static const char *rows[] = {"Enabled", "Hour", "Minute", "Days", "Wake", "Save"};
   for (uint8_t i = 0; i < 6; i++) {
-    tft_.print(i == editField_ ? "> " : "  ");
-    tft_.print(rows[i]);
+    canvas_.print(i == editField_ ? "> " : "  ");
+    canvas_.print(rows[i]);
     switch (i) {
       case 0:
-        tft_.println(editingAlarm_.enabled ? ": On" : ": Off");
+        canvas_.println(editingAlarm_.enabled ? ": On" : ": Off");
         break;
       case 1:
-        tft_.printf(": %02d\n", editingAlarm_.hour);
+        canvas_.printf(": %02d\n", editingAlarm_.hour);
         break;
       case 2:
-        tft_.printf(": %02d\n", editingAlarm_.minute);
+        canvas_.printf(": %02d\n", editingAlarm_.minute);
         break;
       case 3:
-        tft_.print(": ");
-        tft_.println(daysLabel(editingAlarm_.daysMask));
+        canvas_.print(": ");
+        canvas_.println(daysLabel(editingAlarm_.daysMask));
         break;
       case 4:
-        tft_.print(": ");
-        tft_.println(wakeSourceLabel(editingAlarm_.wakeSource));
+        canvas_.print(": ");
+        canvas_.println(wakeSourceLabel(editingAlarm_.wakeSource));
         break;
       default:
-        tft_.println();
+        canvas_.println();
     }
   }
-  tft_.println();
-  tft_.println("tap: next  hold: cancel");
+  canvas_.println();
+  canvas_.println("tap: next  hold: cancel");
 }
 
 void MenuSystem::renderRadio() {
-  tft_.println("Radio");
-  tft_.println();
+  canvas_.println("Radio");
+  canvas_.println();
   if (!radio_.available()) {
-    tft_.println("No radio module");
-    tft_.println("detected on I2C.");
-    tft_.println();
-    tft_.println("hold: back");
+    canvas_.println("No radio module");
+    canvas_.println("detected on I2C.");
+    canvas_.println();
+    canvas_.println("hold: back");
     return;
   }
-  tft_.setTextSize(2);
-  tft_.printf("%.1f MHz\n", radio_.frequencyMHz());
-  tft_.setTextSize(1);
-  tft_.println();
-  tft_.printf("Signal: %u\n", radio_.rssi());
-  tft_.printf("Volume: %u\n", radio_.volume());
-  tft_.println(radio_.muted() ? "Muted" : "Unmuted");
+  canvas_.setTextSize(2);
+  canvas_.printf("%.1f MHz\n", radio_.frequencyMHz());
+  canvas_.setTextSize(1);
+  canvas_.println();
+  canvas_.printf("Signal: %u\n", radio_.rssi());
+  canvas_.printf("Volume: %u\n", radio_.volume());
+  canvas_.println(radio_.muted() ? "Muted" : "Unmuted");
   if (radio_.sleepTimerActive()) {
-    tft_.printf("Sleep: %um\n", radio_.sleepTimerRemainingMinutes());
+    canvas_.printf("Sleep: %um\n", radio_.sleepTimerRemainingMinutes());
   }
-  tft_.println();
-  tft_.println("up/down: tune");
-  tft_.println("tap: mute  hold: back");
+  canvas_.println();
+  canvas_.println("up/down: tune");
+  canvas_.println("tap: mute  hold: back");
 }
 
 void MenuSystem::renderWifiInfo(const String &wifiStatusLine) {
-  tft_.println("WiFi");
-  tft_.println();
-  tft_.println(wifiStatusLine);
-  tft_.println();
-  tft_.println("hold: back");
+  canvas_.println("WiFi");
+  canvas_.println();
+  canvas_.println(wifiStatusLine);
+  canvas_.println();
+  canvas_.println("hold: back");
 }
 
 void MenuSystem::renderSetTime() {
-  tft_.println("Set Time");
-  tft_.println();
+  canvas_.println("Set Time");
+  canvas_.println();
 
   static const char *rows[] = {"Hour", "Minute", "Save"};
   for (uint8_t i = 0; i < 3; i++) {
-    tft_.print(i == editField_ ? "> " : "  ");
-    tft_.print(rows[i]);
+    canvas_.print(i == editField_ ? "> " : "  ");
+    canvas_.print(rows[i]);
     switch (i) {
       case 0:
-        tft_.printf(": %02d\n", editingHour_);
+        canvas_.printf(": %02d\n", editingHour_);
         break;
       case 1:
-        tft_.printf(": %02d\n", editingMinute_);
+        canvas_.printf(": %02d\n", editingMinute_);
         break;
       default:
-        tft_.println();
+        canvas_.println();
     }
   }
   if (!rtc_ || !rtcAvailable_) {
-    tft_.println();
-    tft_.println("(no RTC -- won't save)");
+    canvas_.println();
+    canvas_.println("(no RTC -- won't save)");
   }
-  tft_.println();
-  tft_.println("tap: next  hold: cancel");
+  canvas_.println();
+  canvas_.println("tap: next  hold: cancel");
 }
 
 void MenuSystem::renderTimezone() {
-  tft_.println("Timezone");
-  tft_.println();
-  tft_.println(timezone_.label());
-  tft_.println();
-  tft_.println("Takes effect on the");
-  tft_.println("next NTP sync.");
-  tft_.println();
-  tft_.println("up/down: change");
-  tft_.println("hold: back");
+  canvas_.println("Timezone");
+  canvas_.println();
+  canvas_.println(timezone_.label());
+  canvas_.println();
+  canvas_.println("Takes effect on the");
+  canvas_.println("next NTP sync.");
+  canvas_.println();
+  canvas_.println("up/down: change");
+  canvas_.println("hold: back");
 }

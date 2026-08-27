@@ -52,9 +52,42 @@ static bool sevenSegmentOk = false;
 // wired up the clock will just show that placeholder.
 static DateTime cachedNow;
 
+// Dim gray for the subtitle -- not one of Adafruit_ST77xx's named colors, so
+// computed directly (RGB565, ~mid-gray).
+constexpr uint16_t kDimGray = 0x8410;
+
+// y positions for each bring-up line, spaced enough to breathe at text size
+// 1 (8px glyph height): the two-line, size-2 bold title/subtitle block, then
+// 6 status lines 14px apart -- ends around y=114, comfortably inside the
+// 240x135 landscape canvas.
+constexpr int16_t kSubtitleY = 20;
+constexpr int16_t kStatusStartY = 36;
+constexpr int16_t kStatusLineHeight = 14;
+
+static uint8_t statusLineIndex = 0;
+
+// Faked bold: draws the classic bitmap font twice, offset by one pixel, so
+// strokes overlap and thicken. Adafruit_GFX's built-in font has no bold
+// weight of its own.
+static void printBold(int16_t x, int16_t y, const char *text) {
+  tft.setCursor(x + 1, y);
+  tft.print(text);
+  tft.setCursor(x, y);
+  tft.print(text);
+}
+
 static void reportStatus(const char *label, bool ok) {
-  Serial.printf("%-16s %s\n", label, ok ? "OK" : "FAILED");
-  tft.printf("%-14s %s\n", label, ok ? "OK" : "FAIL");
+  Serial.printf("%-8s %s\n", label, ok ? "OK" : "FAILED");
+
+  int16_t y = kStatusStartY + statusLineIndex * kStatusLineHeight;
+  statusLineIndex++;
+
+  tft.setTextColor(ST77XX_WHITE);
+  tft.setCursor(0, y);
+  tft.print(label);
+  tft.setTextColor(ok ? ST77XX_GREEN : ST77XX_RED);
+  tft.setCursor(72, y);
+  tft.print(ok ? "OK" : "FAIL");
 }
 
 void setup() {
@@ -71,17 +104,20 @@ void setup() {
   tft.init(135, 240);
   tft.setRotation(3);
   tft.fillScreen(ST77XX_BLACK);
-  tft.setTextColor(ST77XX_WHITE);
+
+  tft.setTextSize(2);
+  tft.setTextColor(ST77XX_ORANGE);
+  printBold(0, 0, "ESP32 Alarm Clock");
+
   tft.setTextSize(1);
-  tft.setCursor(0, 0);
-  tft.println("ESP32 radio alarm clock");
-  tft.println("Hardware bring-up");
-  tft.println();
+  tft.setTextColor(kDimGray);
+  tft.setCursor(0, kSubtitleY);
+  tft.print("Hardware bring-up");
 
   Wire.begin();
 
   rtcOk = rtc.begin();
-  reportStatus("RTC (DS3231)", rtcOk);
+  reportStatus("RTC", rtcOk);
   if (rtcOk) {
     if (rtc.lostPower()) {
       Serial.println("RTC lost power, setting to compile time");
@@ -100,17 +136,17 @@ void setup() {
   }
 
   lightSensorOk = lightSensor.begin();
-  reportStatus("Light (VEML7700)", lightSensorOk);
+  reportStatus("Light", lightSensorOk);
 
   sevenSegmentOk = sevenSegment.begin(0x70);
-  reportStatus("7-segment display", sevenSegmentOk);
+  reportStatus("7-seg", sevenSegmentOk);
   if (sevenSegmentOk) {
     sevenSegment.clear();
     sevenSegment.writeDisplay();
   }
 
-  reportStatus("Battery (MAX17048)", battery.begin());
-  reportStatus("Alarm tone (buzzer)", alarmSound.begin());
+  reportStatus("Battery", battery.begin());
+  reportStatus("Buzzer", alarmSound.begin());
   timezoneStore.begin();
 
   pinMode(Pins::VolumeUp, INPUT_PULLUP);
@@ -118,11 +154,11 @@ void setup() {
   pinMode(Pins::SnoozeButton, INPUT_PULLUP);
 
   alarmClock.begin();
-  reportStatus("Radio (SI4730)", radioTuner.begin());
+  reportStatus("Radio", radioTuner.begin());
   menu.begin();
   dashboard.begin();  // may take a few seconds: WiFi connect attempt + NTP sync
 
-  delay(1000);  // leave the bring-up status readable before the menu takes over
+  delay(8000);  // leave the bring-up status readable before the menu takes over
 }
 
 void loop() {

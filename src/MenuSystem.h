@@ -13,6 +13,10 @@
 
 enum class MenuScreen { Home, AlarmList, AlarmEdit, Radio, WifiInfo, SetTime, Timezone };
 
+// tft.init(135, 240) + setRotation(3) puts the display in landscape.
+constexpr int16_t kMenuScreenWidth = 240;
+constexpr int16_t kMenuScreenHeight = 135;
+
 // Renders the on-device menu to the built-in TFT and drives it from the
 // three onboard buttons: D1/D2 move the cursor or adjust a value, D0
 // selects/confirms (short press) or backs out a level (long press).
@@ -38,6 +42,11 @@ class MenuSystem {
  private:
   void handleInput(const DateTime &now);
   void render(const DateTime &now, const String &wifiStatusLine);
+  // Faked bold: draws the classic bitmap font twice, offset by one pixel, so
+  // strokes overlap and thicken. Adafruit_GFX's built-in font has no bold
+  // weight of its own. Leaves canvas_'s cursor at (x, y) (the first draw's
+  // position), same as a single print() would.
+  void printBold(int16_t x, int16_t y, const char *text);
 
   void renderHome(const DateTime &now);
   void renderAlarmList();
@@ -48,6 +57,12 @@ class MenuSystem {
   void renderTimezone();
 
   Adafruit_ST7789 &tft_;
+  // Every render draws into this off-screen buffer first, then render()
+  // blits the whole finished frame to tft_ in one shot -- drawing straight
+  // to tft_ (the previous approach) meant a fillScreen() + incremental
+  // redraw was visibly flashing black on every refresh, including the
+  // once-a-second live clock tick on Home.
+  GFXcanvas16 canvas_{kMenuScreenWidth, kMenuScreenHeight};
   AlarmClock &alarms_;
   RadioTuner &radio_;
   BatteryMonitor *battery_;
@@ -56,8 +71,10 @@ class MenuSystem {
   TimezoneStore &timezone_;
 
   DebouncedButton select_{Pins::MenuSelect};
-  DebouncedButton up_{Pins::MenuUp};
-  DebouncedButton down_{Pins::MenuDown};
+  // This board's D1/D2 are wired active-high (external pull-down) -- the
+  // opposite of D0 and every other button in this project.
+  DebouncedButton up_{Pins::MenuUp, /*activeHigh=*/true};
+  DebouncedButton down_{Pins::MenuDown, /*activeHigh=*/true};
 
   MenuScreen screen_ = MenuScreen::Home;
   // Home: index into {AlarmList, Radio, WifiInfo, SetTime, Timezone}.
@@ -72,5 +89,14 @@ class MenuSystem {
   bool dirty_ = true;       // forces a redraw on the next update()
 
   uint32_t selectPressedAtMs_ = 0;
-  static constexpr uint16_t kLongPressMs = 600;
+  // Set the instant a long press fires (while select_ is still held down),
+  // and only cleared by the next fresh justPressed() -- not by release.
+  // Without this latch, a screen/state change made in response to the long
+  // press (e.g. backing out to a different screen) would still see
+  // select_.isDown() == true on every following handleInput() call until
+  // the user's finger actually lifts, which would either re-fire the long
+  // press instantly on the new screen or (worse) get misread as a fresh
+  // press on it the moment they let go.
+  bool longPressFired_ = false;
+  static constexpr uint16_t kLongPressMs = 1000;
 };

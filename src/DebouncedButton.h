@@ -2,15 +2,18 @@
 
 #include <Arduino.h>
 
-// Debounced digital input with press/release edges. Active-low (buttons
-// wired to GND with an internal pull-up) -- shared by MenuSystem (onboard
-// menu buttons) and main.cpp (panel snooze/volume buttons).
+// Debounced digital input with press/release edges. Defaults to active-low
+// (buttons wired to GND with an internal pull-up) -- true for the snooze/
+// volume panel buttons and the Reverse TFT Feather's own D0 button. That
+// board's D1/D2 buttons are wired the opposite way (external pull-down,
+// HIGH when pressed), so those two need activeHigh=true.
 class DebouncedButton {
  public:
-  explicit DebouncedButton(uint8_t pin) : pin_(pin) {}
+  explicit DebouncedButton(uint8_t pin, bool activeHigh = false)
+      : pin_(pin), activeHigh_(activeHigh) {}
 
   void update() {
-    bool reading = digitalRead(pin_) == LOW;
+    bool reading = activeHigh_ ? digitalRead(pin_) == HIGH : digitalRead(pin_) == LOW;
     if (reading != stableState_ && millis() - lastChangeMs_ > kDebounceMs) {
       stableState_ = reading;
       lastChangeMs_ = millis();
@@ -29,6 +32,7 @@ class DebouncedButton {
  private:
   static constexpr uint16_t kDebounceMs = 30;
   uint8_t pin_;
+  bool activeHigh_;
   bool stableState_ = false;
   bool justPressed_ = false;
   bool justReleased_ = false;
