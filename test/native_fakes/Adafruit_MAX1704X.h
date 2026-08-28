@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 // Minimal native stand-in for the Adafruit MAX1704X driver -- BatteryMonitor
 // holds one by value, so MenuSystem.h (which holds a BatteryMonitor*) needs
 // a full type even when tests pass a null BatteryMonitor*. BatteryMonitor.cpp
@@ -10,6 +12,7 @@
 // Also directly testable via test_battery_monitor, which controls what "the
 // chip" reports back the same way SI4735.h's setSimulatedRssi() does for
 // RadioTuner.
+
 class Adafruit_MAX17048 {
  public:
   bool begin() { return simulatedBeginOk(); }

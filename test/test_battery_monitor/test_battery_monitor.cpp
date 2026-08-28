@@ -39,6 +39,39 @@ void test_begin_success_reports_real_readings() {
   TEST_ASSERT_EQUAL_FLOAT(72.0f, battery.percent());
 }
 
+// Regression: unplugging the battery doesn't take the MAX17048 chip off the
+// I2C bus (it's powered from the board's 3.3V rail, not the battery), so
+// available() can't just latch the boot-time begin() result. Values are the
+// actual readings measured on real hardware with no cell attached (USB
+// power only), a couple seconds after boot.
+void test_implausibly_high_percent_is_treated_as_disconnected() {
+  BatteryMonitor battery;
+  battery.begin();
+  TEST_ASSERT_TRUE(battery.available());
+
+  Adafruit_MAX17048::setSimulatedVoltage(4.137f);
+  Adafruit_MAX17048::setSimulatedPercent(103.0f);
+
+  TEST_ASSERT_FALSE(battery.available());
+  TEST_ASSERT_EQUAL_FLOAT(0.0f, battery.voltage());
+  TEST_ASSERT_EQUAL_FLOAT(0.0f, battery.percent());
+  TEST_ASSERT_FALSE(battery.isLow());
+}
+
+// A real attached battery must keep reading as available -- this is the
+// exact reading measured on real hardware with a battery attached, and a
+// prior attempt at this check misfired specifically on real batteries.
+void test_real_battery_reading_stays_available() {
+  BatteryMonitor battery;
+  battery.begin();
+
+  Adafruit_MAX17048::setSimulatedVoltage(4.021f);
+  Adafruit_MAX17048::setSimulatedPercent(79.8f);
+
+  TEST_ASSERT_TRUE(battery.available());
+  TEST_ASSERT_EQUAL_FLOAT(79.8f, battery.percent());
+}
+
 void test_is_low_reflects_the_configured_threshold() {
   BatteryMonitor battery;
   battery.begin();
@@ -60,6 +93,8 @@ int main(int argc, char **argv) {
   RUN_TEST(test_unavailable_before_begin_returns_zeroed_readings);
   RUN_TEST(test_begin_failure_leaves_it_unavailable);
   RUN_TEST(test_begin_success_reports_real_readings);
+  RUN_TEST(test_implausibly_high_percent_is_treated_as_disconnected);
+  RUN_TEST(test_real_battery_reading_stays_available);
   RUN_TEST(test_is_low_reflects_the_configured_threshold);
   return UNITY_END();
 }

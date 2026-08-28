@@ -15,7 +15,10 @@ class BatteryMonitor {
   float percent();     // 0-100
   bool isLow();         // percent() below BatteryConfig::LowPercentThreshold
 
-  bool available() const { return available_; }
+  // True only if the gauge chip responded at begin() AND its reading looks
+  // like an attached cell rather than a floating sense pin -- see the .cpp
+  // for what this does and doesn't catch.
+  bool available();
 
  private:
   Adafruit_MAX17048 gauge_;

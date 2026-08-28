@@ -14,12 +14,26 @@
 #include <string>
 
 // Minimal stand-in for Arduino's String -- just enough to construct from a
-// literal and hand off to Print::println().
+// literal, hand off to Print::println(), and let MenuSystem split a
+// multi-line status string on '\n'.
 class String {
  public:
   String() = default;
   String(const char *s) : data_(s ? s : "") {}
   const char *c_str() const { return data_.c_str(); }
+  size_t length() const { return data_.size(); }
+  int indexOf(char ch, size_t fromIndex = 0) const {
+    if (fromIndex > data_.size()) return -1;
+    auto pos = data_.find(ch, fromIndex);
+    return pos == std::string::npos ? -1 : static_cast<int>(pos);
+  }
+  String substring(size_t from) const {
+    return from >= data_.size() ? String() : String(data_.substr(from).c_str());
+  }
+  String substring(size_t from, size_t to) const {
+    if (from >= data_.size() || to <= from) return String();
+    return String(data_.substr(from, to - from).c_str());
+  }
 
  private:
   std::string data_;
@@ -53,6 +67,7 @@ inline void tone(uint8_t pin, unsigned int frequency) {
   (void)frequency;
 }
 inline void noTone(uint8_t pin) { (void)pin; }
+inline void delay(uint32_t ms) { (void)ms; }
 
 // Per-pin simulated digital input state, settable from tests (buttons are
 // active-low with internal pull-ups, so HIGH = not pressed is the default).
