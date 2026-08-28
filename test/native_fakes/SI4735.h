@@ -37,19 +37,44 @@ class SI4735 {
     (void)step;
     frequency = initialFreq;
   }
-  void setFrequency(uint16_t freq) { frequency = freq; }
+  void setFrequency(uint16_t freq) {
+    frequency = freq;
+    driverCallCount()++;
+  }
   uint16_t getFrequency() { return frequency; }
 
-  void setVolume(uint8_t v) { volume = v; }
+  void setVolume(uint8_t v) {
+    volume = v;
+    driverCallCount()++;
+  }
 
-  void seekStationUp() { seekUpCalls++; }
-  void seekStationDown() { seekDownCalls++; }
+  void seekStationUp() {
+    seekUpCalls++;
+    driverCallCount()++;
+  }
+  void seekStationDown() {
+    seekDownCalls++;
+    driverCallCount()++;
+  }
 
   uint8_t getCurrentRSSI() { return simulatedRssi(); }
-  void setAudioMute(bool m) { muted = m; }
+  void setAudioMute(bool m) {
+    muted = m;
+    driverCallCount()++;
+  }
 
   static void setSimulatedRssi(uint8_t value) { simulatedRssi() = value; }
   static void resetSimulatedRssi() { simulatedRssi() = 50; }  // default: "good signal"
+
+  // Process-wide count of calls into any driver method that would talk to
+  // real hardware (setFrequency/seekStationUp/seekStationDown/setVolume/
+  // setAudioMute) -- lets a test confirm a guarded RadioTuner method never
+  // reached the driver at all, not just that it didn't crash.
+  static int &driverCallCount() {
+    static int v = 0;
+    return v;
+  }
+  static void resetDriverCallCount() { driverCallCount() = 0; }
 
   // Test-observable state.
   uint16_t frequency = 0;

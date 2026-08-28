@@ -28,17 +28,26 @@ bool RadioTuner::begin(uint8_t resetPin) {
 }
 
 void RadioTuner::tune(uint16_t frequency10kHz) {
+  // The preference is persisted either way (matches volume_/muted_ below)
+  // so it's already in place for whenever a chip does get connected -- only
+  // the actual hardware write is skipped without one.
   frequency10kHz = constrain(frequency10kHz, RadioConfig::FmBandStart, RadioConfig::FmBandEnd);
-  si4735_.setFrequency(frequency10kHz);
-
   Preferences prefs;
   prefs.begin(kNamespace, false);
   prefs.putUShort(kFreqKey, frequency10kHz);
   prefs.end();
+  if (!available_) return;
+  si4735_.setFrequency(frequency10kHz);
 }
 
-void RadioTuner::seekUp() { si4735_.seekStationUp(); }
-void RadioTuner::seekDown() { si4735_.seekStationDown(); }
+void RadioTuner::seekUp() {
+  if (!available_) return;
+  si4735_.seekStationUp();
+}
+void RadioTuner::seekDown() {
+  if (!available_) return;
+  si4735_.seekStationDown();
+}
 
 void RadioTuner::setVolume(uint8_t volume) {
   applyVolume(volume);
@@ -49,6 +58,7 @@ void RadioTuner::setVolumeTransient(uint8_t volume) { applyVolume(volume); }
 
 void RadioTuner::applyVolume(uint8_t volume) {
   volume_ = min<uint8_t>(volume, 63);
+  if (!available_) return;
   si4735_.setVolume(volume_);
 }
 
@@ -57,11 +67,18 @@ void RadioTuner::volumeDown() { setVolume(volume_ > 0 ? volume_ - 1 : 0); }
 
 void RadioTuner::setMuted(bool muted) {
   muted_ = muted;
+  if (!available_) return;
   si4735_.setAudioMute(muted_);
 }
 
-uint16_t RadioTuner::frequency10kHz() { return si4735_.getFrequency(); }
-uint8_t RadioTuner::rssi() { return si4735_.getCurrentRSSI(); }
+uint16_t RadioTuner::frequency10kHz() {
+  if (!available_) return 0;
+  return si4735_.getFrequency();
+}
+uint8_t RadioTuner::rssi() {
+  if (!available_) return 0;
+  return si4735_.getCurrentRSSI();
+}
 
 void RadioTuner::storePreset(uint8_t index, uint16_t frequency10kHz) {
   if (index >= presetCount()) return;

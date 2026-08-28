@@ -11,11 +11,17 @@
 class RadioTuner {
  public:
   // Returns false if no SI4730/35 responded on the I2C bus at either its
-  // known address -- e.g. the module isn't wired up yet. Callers should
-  // check available() before trusting anything below to reflect a real
-  // chip; the setters still won't crash if called anyway (they just talk
-  // to a driver object backed by nothing), but frequency10kHz()/rssi()/etc.
-  // won't mean anything either.
+  // known address -- e.g. the module isn't wired up yet. Every method
+  // below checks available() internally and no-ops (or returns a zeroed
+  // default) rather than touching the underlying driver when it's false --
+  // the PU2CLR SI4735 library's waitToSend() polls the chip's Clear-To-Send
+  // bit in an unbounded loop with no timeout, so calling into it with no
+  // chip actually present hangs the calling task forever (this is exactly
+  // what used to happen when the web dashboard queried radio state
+  // unconditionally on every poll: an infinite busy-loop with no chip to
+  // ever set that bit, eventually tripping whichever task's watchdog was
+  // waiting on it). Callers still don't need to check available() first --
+  // it's just for deciding whether to show/skip radio UI.
   bool begin(uint8_t resetPin = Pins::RadioReset);
   bool available() const { return available_; }
 

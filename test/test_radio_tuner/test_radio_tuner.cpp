@@ -8,6 +8,7 @@ void setUp() {
   Preferences::resetAll();
   SI4735::resetSimulatedRssi();
   SI4735::resetSimulatedPresent();
+  SI4735::resetDriverCallCount();
 }
 void tearDown() {}
 
@@ -175,6 +176,38 @@ void test_set_sleep_timer_to_zero_behaves_like_cancel() {
   TEST_ASSERT_FALSE(radio.muted());
 }
 
+// Regression: every method used to call straight into the underlying
+// SI4735 driver with no available() check. The real library's
+// waitToSend() polls the chip's Clear-To-Send bit in an unbounded loop
+// with no timeout, so with no chip actually present, this hung forever --
+// exactly what the web dashboard hit querying radio state unconditionally
+// on every poll. Getters must return a safe default and setters must not
+// touch the driver at all when unavailable (while still tracking
+// volume/mute state, same as if a chip were there).
+void test_nothing_touches_the_driver_when_radio_is_unavailable() {
+  SI4735::setSimulatedPresent(false);
+  RadioTuner radio;
+  radio.begin();
+  TEST_ASSERT_FALSE(radio.available());
+
+  TEST_ASSERT_EQUAL(0, radio.frequency10kHz());
+  TEST_ASSERT_EQUAL(0, radio.rssi());
+
+  radio.tune(9500);
+  radio.seekUp();
+  radio.seekDown();
+  radio.setVolume(40);
+  radio.setMuted(true);
+
+  // Tracked in the wrapper regardless of hardware, same as BatteryMonitor's
+  // pattern for its own unavailable case.
+  TEST_ASSERT_EQUAL(40, radio.volume());
+  TEST_ASSERT_TRUE(radio.muted());
+  // None of the five calls above reached the driver at all -- this is what
+  // actually confirms the guard, not just that nothing crashed.
+  TEST_ASSERT_EQUAL(0, SI4735::driverCallCount());
+}
+
 void test_rssi_reflects_simulated_signal() {
   RadioTuner radio;
   radio.begin();
@@ -200,6 +233,7 @@ int main(int argc, char **argv) {
   RUN_TEST(test_sleep_timer_remaining_minutes_is_exact_at_the_boundary);
   RUN_TEST(test_cancel_sleep_timer_prevents_auto_mute);
   RUN_TEST(test_set_sleep_timer_to_zero_behaves_like_cancel);
+  RUN_TEST(test_nothing_touches_the_driver_when_radio_is_unavailable);
   RUN_TEST(test_rssi_reflects_simulated_signal);
   return UNITY_END();
 }
