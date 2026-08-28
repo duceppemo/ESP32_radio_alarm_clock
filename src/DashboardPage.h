@@ -123,6 +123,13 @@ const wakeSources = [['radio', 'Radio'], ['beep', 'Beep'], ['chime', 'Chime']];
 
 let rebooting = false;
 
+// Was 5 separate requests (status/security/timezone/radio/alarms) every
+// 2s -- each one blocks on the device's shared state lock until loop()
+// releases it, and that much sustained contention was enough to trip the
+// async_tcp task's watchdog and reboot the device. One combined endpoint
+// cuts that 5x. The timezone dropdown's option list is loaded once
+// separately (see loadTimezoneOptions()), since it never changes at
+// runtime and doesn't need to ride along on every poll.
 async function refresh() {
   if (rebooting) return;
   try {
@@ -142,30 +149,18 @@ async function refresh() {
     } else {
       banner.style.display = 'none';
     }
-  } catch (e) { /* device may be mid-reboot after WiFi save */ }
 
-  try {
-    const security = await api('/api/security');
     const usernameField = document.getElementById('authUsername');
-    if (document.activeElement !== usernameField) usernameField.value = security.username;
-  } catch (e) {}
+    if (document.activeElement !== usernameField) usernameField.value = status.security.username;
 
-  try {
-    const tz = await api('/api/timezone');
     const tzSelect = document.getElementById('tzSelect');
-    if (tzSelect.dataset.loaded !== String(tz.options.length)) {
-      tzSelect.innerHTML = tz.options.map((label, i) => `<option value="${i}">${label}</option>`).join('');
-      tzSelect.dataset.loaded = String(tz.options.length);
-    }
-    tzSelect.value = tz.index;
-  } catch (e) {}
+    if (tzSelect.dataset.loaded) tzSelect.value = status.timezoneIndex;
 
-  try {
-    const radio = await api('/api/radio');
+    const radio = status.radio;
     document.getElementById('radioFreq').textContent = (radio.frequency10kHz / 100).toFixed(1) + ' MHz';
     document.getElementById('volumeValue').textContent = radio.volume;
-    // Same clobbering guard as the alarm list/timezone/username fields
-    // elsewhere in this file -- don't yank the slider mid-drag.
+    // Same clobbering guard as the alarm list/username field above --
+    // don't yank the slider mid-drag.
     const volumeSlider = document.getElementById('volumeSlider');
     if (document.activeElement !== volumeSlider) volumeSlider.value = radio.volume;
     document.getElementById('muteBtn').textContent = radio.muted ? 'Unmute' : 'Mute';
@@ -180,10 +175,8 @@ async function refresh() {
       b.onclick = () => freq ? radioPreset('recall', i) : radioPreset('store', i);
       presetsEl.appendChild(b);
     });
-  } catch (e) {}
 
-  try {
-    const alarms = await api('/api/alarms');
+    const alarms = status.alarms;
     const list = document.getElementById('alarmList');
     // Skip the rebuild while a field inside the list is being edited, so an
     // in-progress edit isn't wiped out by a poll that lands mid-keystroke.
@@ -195,7 +188,7 @@ async function refresh() {
       list.innerHTML = '';
       alarms.alarms.forEach((a, i) => {
         const div = document.createElement('div');
-        div.className = 'row' + (alarms.state !== 'idle' && alarms.ringingIndex === i ? ' alarm-ringing' : '');
+        div.className = 'row' + (status.alarmState !== 'idle' && alarms.ringingIndex === i ? ' alarm-ringing' : '');
         div.innerHTML = `
           <input type="checkbox" ${a.enabled ? 'checked' : ''} onchange="updateAlarm(${i})" id="en${i}">
           <input type="number" value="${a.hour}" min="0" max="23" style="width:3.5em" id="h${i}">:
@@ -206,6 +199,19 @@ async function refresh() {
         list.appendChild(div);
       });
     }
+  } catch (e) { /* device may be mid-reboot after WiFi save */ }
+}
+
+// The option list itself is static (never changes at runtime), so it's
+// fetched once here rather than riding along on every 2s poll -- refresh()
+// still keeps the selected value in sync via status.timezoneIndex.
+async function loadTimezoneOptions() {
+  try {
+    const tz = await api('/api/timezone');
+    const tzSelect = document.getElementById('tzSelect');
+    tzSelect.innerHTML = tz.options.map((label, i) => `<option value="${i}">${label}</option>`).join('');
+    tzSelect.value = tz.index;
+    tzSelect.dataset.loaded = 'true';
   } catch (e) {}
 }
 
@@ -284,6 +290,7 @@ async function importSettings() {
   }
 }
 
+loadTimezoneOptions();
 refresh();
 setInterval(refresh, 2000);
 </script>

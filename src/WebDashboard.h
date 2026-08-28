@@ -33,6 +33,11 @@ class WebDashboard {
                TimezoneStore &timezone);
 
   void begin();
+  // rtc is constructed and wired up before rtc->begin() is ever called
+  // (it's a global, initialized before setup() runs), so the constructor
+  // can't know yet whether the hardware actually responded -- call this
+  // once setup() finds out, same as MenuSystem::setRtcAvailable().
+  void setRtcAvailable(bool available) { rtcAvailable_ = available; }
   // Call every loop iteration: services a queued restart after a WiFi
   // credential change, and re-syncs NTP once a day (the server itself runs
   // on its own task and doesn't need ticking).
@@ -41,18 +46,25 @@ class WebDashboard {
   // Short human-readable summary for the on-device WiFi info screen.
   String statusLine() const;
 
-  // rtc is constructed and wired up before rtc->begin() is ever called (it's
-  // a global, initialized before setup() runs), so the constructor can't
-  // know yet whether the hardware actually responded -- call this once
-  // setup() finds out, so a non-null-but-non-functional rtc doesn't get
-  // treated as available.
-  void setRtcAvailable(bool available) { rtcAvailable_ = available; }
+  // True once joined to the home network (STA mode); false while still on
+  // the open setup AP, where there's no real internet uplink to sync
+  // against. For callers deciding whether syncTimeFromNtp() is worth
+  // attempting -- it already tolerates being called with no network
+  // (getLocalTime() just times out), so this isn't required, only a way to
+  // skip a pointless multi-second block when already known to be offline.
+  bool isOnline() const { return !apMode_; }
+
+  // Forces an immediate NTP resync -- normally this happens automatically
+  // (once on boot, then daily), but MenuSystem's Date & Time screen offers
+  // a manual "Sync Now" too. Callers must already hold a StateLock (see
+  // StateLock.h): this touches rtc_/timezone_, the same objects loop() and
+  // every dashboard route handler share.
+  void syncTimeFromNtp();
 
  private:
   bool connectStation(const String &ssid, const String &password);
   void startAccessPoint();
   void registerRoutes();
-  void syncTimeFromNtp();
   String buildStatusJson();
   String buildAlarmsJson();
   String buildRadioJson();

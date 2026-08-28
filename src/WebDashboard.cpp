@@ -1,5 +1,7 @@
 #include "WebDashboard.h"
 
+#include <cstring>
+
 #include <ArduinoJson.h>
 #include <ElegantOTA.h>
 #include <ESPmDNS.h>
@@ -96,7 +98,13 @@ String WebDashboard::statusLine() const {
   // No StateLock here -- only ever called from main.cpp's loop(), which
   // already holds one (see StateLock.h / WebDashboard::update()).
   if (apMode_) {
-    return String("AP: ") + NetConfig::ApSsid + "\n" + WiFi.softAPIP().toString();
+    // The AP itself is open (see startAccessPoint() -- no join password),
+    // but the dashboard behind it still needs the admin login. That's
+    // otherwise only shown on the AP-mode web page itself, which requires
+    // a phone/laptop already joined to the AP to see -- surfacing it here
+    // too means the on-device screen alone is enough to get in.
+    return String("AP: ") + NetConfig::ApSsid + "\n" + WiFi.softAPIP().toString() + "\nUser: " +
+           adminUsername_ + "\nPass: " + adminPassword_;
   }
   return String("STA: ") + staSsid_ + "\n" + WiFi.localIP().toString() + "\n" +
          NetConfig::MdnsHostname + ".local";
@@ -143,7 +151,20 @@ void WebDashboard::registerRoutes() {
   server_.on("/", HTTP_GET, [this](AsyncWebServerRequest *request) {
     StateLock lock;
     if (!requireAuth(request)) return;
-    request->send(200, "text/html", kDashboardHtml);
+    // Streamed in library-chosen chunks (see AwsResponseFiller) instead of
+    // handed to send() as one ~13KB buffer -- serving a static page this
+    // size in a single copy is a documented source of async_tcp task
+    // watchdog reboots in this library family (me-no-dev/ESPAsyncWebServer
+    // #634, #1007 and similar); this is the same issue reducing the
+    // dashboard's polling to one request/2s (see buildStatusJson()) didn't
+    // fix, since it happens on this very first response.
+    request->send("text/html", sizeof(kDashboardHtml) - 1,
+                  [](uint8_t *buffer, size_t maxLen, size_t index) -> size_t {
+                    size_t remaining = sizeof(kDashboardHtml) - 1 - index;
+                    size_t toCopy = remaining < maxLen ? remaining : maxLen;
+                    memcpy(buffer, kDashboardHtml + index, toCopy);
+                    return toCopy;
+                  });
   });
 
   server_.on("/api/status", HTTP_GET, [this](AsyncWebServerRequest *request) {
@@ -329,6 +350,13 @@ void WebDashboard::registerRoutes() {
 }
 
 String WebDashboard::buildStatusJson() {
+  // Combines what used to be five separate endpoints (status/security/
+  // timezone/radio/alarms) into one -- the dashboard's periodic poll hit
+  // all five every 2s, each one blocking on StateLock, which was enough
+  // sustained contention with loop() to trip the async_tcp task's
+  // watchdog and reboot the device. The individual endpoints still exist
+  // (used for the one-time timezone option list and settings export/
+  // import), just no longer polled repeatedly.
   JsonDocument doc;
   doc["mode"] = apMode_ ? "ap" : "sta";
   doc["ip"] = apMode_ ? WiFi.softAPIP().toString() : WiFi.localIP().toString();
@@ -353,6 +381,35 @@ String WebDashboard::buildStatusJson() {
     doc["batteryVoltage"] = battery_->voltage();
     doc["batteryLow"] = battery_->isLow();
   }
+
+  JsonObject security = doc["security"].to<JsonObject>();
+  security["username"] = adminUsername_;
+
+  doc["timezoneIndex"] = timezone_.index();
+  doc["timezoneLabel"] = timezone_.label();
+
+  JsonObject radio = doc["radio"].to<JsonObject>();
+  radio["frequency10kHz"] = radio_.frequency10kHz();
+  radio["volume"] = radio_.volume();
+  radio["muted"] = radio_.muted();
+  radio["sleepTimerMinutes"] = radio_.sleepTimerRemainingMinutes();
+  JsonArray presets = radio["presets"].to<JsonArray>();
+  for (uint8_t i = 0; i < radio_.presetCount(); i++) presets.add(radio_.preset(i));
+
+  JsonObject alarmsObj = doc["alarms"].to<JsonObject>();
+  alarmsObj["ringingIndex"] = alarms_.ringingAlarmIndex();
+  JsonArray alarmsArr = alarmsObj["alarms"].to<JsonArray>();
+  for (uint8_t i = 0; i < AlarmClock::count(); i++) {
+    const Alarm &a = alarms_.alarm(i);
+    JsonObject o = alarmsArr.add<JsonObject>();
+    o["enabled"] = a.enabled;
+    o["hour"] = a.hour;
+    o["minute"] = a.minute;
+    o["wakeSource"] = wakeSourceName(a.wakeSource);
+    JsonArray days = o["days"].to<JsonArray>();
+    for (uint8_t d = 0; d < 7; d++) days.add((bool)(a.daysMask & (1 << d)));
+  }
+
   String out;
   serializeJson(doc, out);
   return out;
