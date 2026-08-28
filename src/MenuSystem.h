@@ -9,9 +9,14 @@
 #include "Config.h"
 #include "DebouncedButton.h"
 #include "RadioTuner.h"
+#include "TimeFormatStore.h"
 #include "TimezoneStore.h"
 
 enum class MenuScreen { Home, AlarmList, AlarmEdit, Radio, WifiInfo, SetTime, Timezone };
+
+// Which pictogram renderHome()'s app-icon-style nav row draws in each
+// rounded-square badge -- see MenuSystem.cpp's drawAppIcon().
+enum class IconGlyph { Bell, Radio, Wifi, Calendar, Globe };
 
 // tft.init(135, 240) + setRotation(3) puts the display in landscape.
 constexpr int16_t kMenuScreenWidth = 240;
@@ -25,12 +30,16 @@ class MenuSystem {
   // rtc may be null (e.g. before the RTC is wired up) -- the Set Time
   // screen still displays but saving silently does nothing.
   MenuSystem(Adafruit_ST7789 &tft, AlarmClock &alarms, RadioTuner &radio, BatteryMonitor *battery,
-             RTC_DS3231 *rtc, TimezoneStore &timezone);
+             RTC_DS3231 *rtc, TimezoneStore &timezone, TimeFormatStore &timeFormat);
 
   void begin();
   // now: current time for the Home screen and alarm status; wifiStatusLine
   // is a short caller-supplied string (SSID/IP or AP name) for WifiInfo.
-  void update(const DateTime &now, const String &wifiStatusLine);
+  // wifiOnline mirrors WebDashboard::isOnline() -- it's what greys out (and
+  // disables) the Date & Time screen's Sync Now row when there's no uplink
+  // to sync against. Defaults to true so existing callers/tests that don't
+  // care about it don't need updating.
+  void update(const DateTime &now, const String &wifiStatusLine, bool wifiOnline = true);
 
   // rtc is constructed and wired up before rtc->begin() is ever called (it's
   // a global, initialized before setup() runs), so the constructor can't
@@ -39,14 +48,52 @@ class MenuSystem {
   // treated as available.
   void setRtcAvailable(bool available) { rtcAvailable_ = available; }
 
+  // True exactly once after the user selects "Sync Now" on the Date & Time
+  // screen -- MenuSystem has no reference to WebDashboard (nothing else
+  // here needs one), so main.cpp's loop() polls this each iteration and,
+  // if set, triggers the actual NTP resync itself.
+  bool consumeNtpSyncRequest() {
+    bool requested = ntpSyncRequested_;
+    ntpSyncRequested_ = false;
+    return requested;
+  }
+
  private:
   void handleInput(const DateTime &now);
   void render(const DateTime &now, const String &wifiStatusLine);
   // Faked bold: draws the classic bitmap font twice, offset by one pixel, so
-  // strokes overlap and thicken. Adafruit_GFX's built-in font has no bold
-  // weight of its own. Leaves canvas_'s cursor at (x, y) (the first draw's
-  // position), same as a single print() would.
+  // strokes overlap and thicken. Used only where digit alignment matters
+  // (the Home clock) or a string might be too long for a real font at a
+  // legible size (the Timezone screen's label). Leaves canvas_'s cursor at
+  // (x, y) (the first draw's position), same as a single print() would.
   void printBold(int16_t x, int16_t y, const char *text);
+  // Draws `text` in a real bold proportional font (FreeSansBold9pt7b) with
+  // its visual top-left at (x, yTop). Used for every screen's title.
+  void printHeader(int16_t x, int16_t yTop, const char *text);
+  // Draws `text` in a real regular proportional font (FreeSans9pt7b, dim
+  // gray) with its visual top-left at (x, yTop). Used for every screen's
+  // footer hint.
+  void printHint(int16_t x, int16_t yTop, const char *text);
+  // Positions the cursor so text in whatever font/size is currently set
+  // will have its visual top at (x, yTop) -- GFXfont draws from the
+  // baseline, not the top, so this measures the actual ascent via
+  // getTextBounds() rather than guessing a fixed offset per font/size.
+  void setCursorTop(int16_t x, int16_t yTop);
+
+  // Lock-screen-style status bar icons (top-right of Home). WiFi draws the
+  // classic fan-plus-dot glyph when connected to a home network, or plain
+  // "AP" text while still on the setup access point -- trying to cram an
+  // "AP" badge onto the tiny fan shape wasn't legible at this size. Battery
+  // draws an empty dim outline with no fill/percent when unavailable
+  // (no reliable charging signal exists yet -- see BatteryMonitor -- so
+  // there's no lightning-bolt state, just outline/fill color).
+  void drawWifiStatusIcon(int16_t x, int16_t y, bool staConnected);
+  void drawBatteryStatusIcon(int16_t x, int16_t y);
+
+  // One rounded-square app-icon-style badge for Home's bottom nav row:
+  // colored background, a simple glyph, brightened plus a border when
+  // focused.
+  void drawAppIcon(int16_t x, int16_t y, IconGlyph glyph, uint16_t bgColor, bool focused);
 
   void renderHome(const DateTime &now);
   void renderAlarmList();
@@ -69,6 +116,7 @@ class MenuSystem {
   RTC_DS3231 *rtc_;
   bool rtcAvailable_ = true;
   TimezoneStore &timezone_;
+  TimeFormatStore &timeFormat_;
 
   DebouncedButton select_{Pins::MenuSelect};
   // This board's D1/D2 are wired active-high (external pull-down) -- the
@@ -80,13 +128,23 @@ class MenuSystem {
   // Home: index into {AlarmList, Radio, WifiInfo, SetTime, Timezone}.
   // AlarmList: alarm index.
   uint8_t cursor_ = 0;
-  // Which row is selected: AlarmEdit (0-5) and SetTime (0-2) both reuse this,
-  // since the two screens are never active at the same time.
+  // Which row is selected: AlarmEdit (0-5) and SetTime (0-7) both reuse
+  // this, since the two screens are never active at the same time.
   uint8_t editField_ = 0;
-  Alarm editingAlarm_;      // working copy while in AlarmEdit, until saved
-  uint8_t editingHour_ = 0;    // working copy while in SetTime, until saved
-  uint8_t editingMinute_ = 0;  // working copy while in SetTime, until saved
-  bool dirty_ = true;       // forces a redraw on the next update()
+  Alarm editingAlarm_;  // working copy while in AlarmEdit, until saved
+  // Working copies while in SetTime (fields: Year, Month, Day, Hour,
+  // Minute, Format, Sync Now, Save), until saved. Day-of-week isn't itself
+  // editable -- it's always derived from the date (RTClib's
+  // DateTime::dayOfTheWeek()), so fixing the date here is what keeps it
+  // correct.
+  uint16_t editingYear_ = 2026;
+  uint8_t editingMonth_ = 1;   // 1-12
+  uint8_t editingDay_ = 1;     // 1-31, clamped to the actual month length
+  uint8_t editingHour_ = 0;
+  uint8_t editingMinute_ = 0;
+  bool wifiOnline_ = true;         // see update()'s wifiOnline parameter
+  bool ntpSyncRequested_ = false;  // see consumeNtpSyncRequest()
+  bool dirty_ = true;              // forces a redraw on the next update()
 
   uint32_t selectPressedAtMs_ = 0;
   // Set the instant a long press fires (while select_ is still held down),

@@ -1,5 +1,11 @@
 #include "MenuSystem.h"
 
+#include <cstring>
+
+#include <Fonts/FreeSans24pt7b.h>
+#include <Fonts/FreeSans9pt7b.h>
+#include <Fonts/FreeSansBold9pt7b.h>
+
 namespace {
 constexpr uint8_t kDaysWeekdays = 0b0111110;
 constexpr uint8_t kDaysWeekends = 0b1000001;
@@ -39,12 +45,57 @@ WakeSource cycleWakeSource(WakeSource source, int8_t direction) {
   return static_cast<WakeSource>(next);
 }
 
+// The DS3231 (and RTClib's DateTime) only really cover 2000-2099 (2-digit
+// year register + a fixed century), so Year wraps within that range rather
+// than letting it drift to something the RTC can't actually store.
+uint16_t cycleYear(uint16_t year, int8_t direction) {
+  return 2000 + (uint16_t)((year - 2000 + 100 + direction) % 100);
+}
+
+uint8_t daysInMonth(uint16_t year, uint8_t month) {
+  static const uint8_t kDays[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+  bool leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+  if (month == 2 && leap) return 29;
+  return kDays[month - 1];
+}
+
+const char *monthName(uint8_t month) {
+  static const char *kNames[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                                  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+  return kNames[month - 1];
+}
+
+// RTClib's DateTime::dayOfTheWeek() returns 0=Sunday.
+const char *dayOfWeekName(uint8_t dow) {
+  static const char *kNames[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+  return kNames[dow];
+}
+
 constexpr uint8_t kHomeMenuItems = 5;  // AlarmList, Radio, WifiInfo, SetTime, Timezone
 
 // Dim gray for de-emphasized text (unselected menu items, "no radio" etc.) --
 // not one of Adafruit_ST77xx's named colors, so computed directly (RGB565,
 // ~mid-gray).
 constexpr uint16_t kDimGray = 0x8410;
+// Soft sky-blue accent, used sparingly (currently just the Home date line)
+// to give the screen a second focal color beyond white/dim-gray plus the
+// functional red/orange/green already used for alerts and status.
+constexpr uint16_t kAccentBlue = 0x5C3F;
+
+// App-icon badge background colors for Home's bottom nav row, chosen to
+// echo (not match pixel-for-pixel) the iOS system colors for the app each
+// stands in for -- Clock's orange, a Music/Podcasts-style purple, Wi-Fi
+// blue, Calendar red, and a globe green.
+constexpr uint16_t kIconOrange = 0xFD20;  // == ST77XX_ORANGE
+constexpr uint16_t kIconPurple = 0xAA9B;
+constexpr uint16_t kIconBlue = 0x0C3F;
+constexpr uint16_t kIconRed = 0xF800;  // == ST77XX_RED
+constexpr uint16_t kIconGreen = 0x368B;
+
+// Top-right corner placement shared by every screen that echoes its Home
+// nav icon next to its header, as a small unfocused (borderless) badge.
+constexpr int16_t kHeaderIconX = 216;
+constexpr int16_t kHeaderIconY = 2;
 }  // namespace
 
 void MenuSystem::printBold(int16_t x, int16_t y, const char *text) {
@@ -54,9 +105,47 @@ void MenuSystem::printBold(int16_t x, int16_t y, const char *text) {
   canvas_.print(text);
 }
 
+void MenuSystem::setCursorTop(int16_t x, int16_t yTop) {
+  int16_t x1, y1;
+  uint16_t w, h;
+  // A representative sample rather than the real string: what matters is
+  // the font's ascent (how far above the baseline its tallest glyphs
+  // reach), which "Hg" captures (cap height + descender) regardless of
+  // what text is about to be printed.
+  canvas_.getTextBounds("Hg", 0, 0, &x1, &y1, &w, &h);
+  canvas_.setCursor(x, yTop - y1);
+}
+
+void MenuSystem::printHeader(int16_t x, int16_t yTop, const char *text) {
+  // GFXfonts are already sized at their own nominal point size -- reset to
+  // an unscaled size 1 first, or whatever integer scale was left over from
+  // classic-font content elsewhere on the screen would multiply it too.
+  canvas_.setTextSize(1);
+  canvas_.setFont(&FreeSansBold9pt7b);
+  setCursorTop(x, yTop);
+  canvas_.print(text);
+  canvas_.setFont(nullptr);
+}
+
+void MenuSystem::printHint(int16_t x, int16_t yTop, const char *text) {
+  canvas_.setTextSize(1);
+  canvas_.setFont(&FreeSans9pt7b);
+  setCursorTop(x, yTop);
+  canvas_.setTextColor(kDimGray);
+  canvas_.print(text);
+  canvas_.setFont(nullptr);
+}
+
 MenuSystem::MenuSystem(Adafruit_ST7789 &tft, AlarmClock &alarms, RadioTuner &radio,
-                       BatteryMonitor *battery, RTC_DS3231 *rtc, TimezoneStore &timezone)
-    : tft_(tft), alarms_(alarms), radio_(radio), battery_(battery), rtc_(rtc), timezone_(timezone) {}
+                       BatteryMonitor *battery, RTC_DS3231 *rtc, TimezoneStore &timezone,
+                       TimeFormatStore &timeFormat)
+    : tft_(tft),
+      alarms_(alarms),
+      radio_(radio),
+      battery_(battery),
+      rtc_(rtc),
+      timezone_(timezone),
+      timeFormat_(timeFormat) {}
 
 void MenuSystem::begin() {
   pinMode(Pins::MenuSelect, INPUT_PULLUP);
@@ -66,7 +155,8 @@ void MenuSystem::begin() {
   pinMode(Pins::MenuDown, INPUT);
 }
 
-void MenuSystem::update(const DateTime &now, const String &wifiStatusLine) {
+void MenuSystem::update(const DateTime &now, const String &wifiStatusLine, bool wifiOnline) {
+  wifiOnline_ = wifiOnline;
   select_.update();
   up_.update();
   down_.update();
@@ -95,9 +185,17 @@ void MenuSystem::handleInput(const DateTime &now) {
     shortPress = true;
   }
 
-  bool up = up_.justPressed();
-  bool down = down_.justPressed();
-  if (!up && !down && !shortPress && !longPress) return;
+  // Two flavors of up/down: a plain tap for moving a cursor through a short
+  // list (Home, AlarmList), and an auto-repeating one for adjusting a value
+  // (AlarmEdit fields, radio tuning, Set Time, Timezone) so holding the
+  // button keeps changing it instead of needing repeated taps. triggered()
+  // has a side effect (advances its own repeat schedule) so it's computed
+  // exactly once here per button and reused below, never called again.
+  bool upTap = up_.justPressed();
+  bool downTap = down_.justPressed();
+  bool upRepeat = up_.triggered();
+  bool downRepeat = down_.triggered();
+  if (!upTap && !downTap && !upRepeat && !downRepeat && !shortPress && !longPress) return;
   dirty_ = true;
 
   switch (screen_) {
@@ -107,8 +205,8 @@ void MenuSystem::handleInput(const DateTime &now) {
         if (longPress) alarms_.dismiss();
         return;
       }
-      if (up) cursor_ = (cursor_ + kHomeMenuItems - 1) % kHomeMenuItems;
-      if (down) cursor_ = (cursor_ + 1) % kHomeMenuItems;
+      if (upTap) cursor_ = (cursor_ + kHomeMenuItems - 1) % kHomeMenuItems;
+      if (downTap) cursor_ = (cursor_ + 1) % kHomeMenuItems;
       if (shortPress) {
         switch (cursor_) {
           case 0:
@@ -122,6 +220,9 @@ void MenuSystem::handleInput(const DateTime &now) {
             screen_ = MenuScreen::WifiInfo;
             break;
           case 3:
+            editingYear_ = now.year();
+            editingMonth_ = now.month();
+            editingDay_ = now.day();
             editingHour_ = now.hour();
             editingMinute_ = now.minute();
             editField_ = 0;
@@ -136,8 +237,8 @@ void MenuSystem::handleInput(const DateTime &now) {
     }
 
     case MenuScreen::AlarmList: {
-      if (up) cursor_ = (cursor_ + AlarmClock::count() - 1) % AlarmClock::count();
-      if (down) cursor_ = (cursor_ + 1) % AlarmClock::count();
+      if (upTap) cursor_ = (cursor_ + AlarmClock::count() - 1) % AlarmClock::count();
+      if (downTap) cursor_ = (cursor_ + 1) % AlarmClock::count();
       if (shortPress) {
         editingAlarm_ = alarms_.alarm(cursor_);
         editField_ = 0;
@@ -151,8 +252,8 @@ void MenuSystem::handleInput(const DateTime &now) {
     }
 
     case MenuScreen::AlarmEdit: {
-      if (up || down) {
-        int8_t dir = up ? 1 : -1;
+      if (upRepeat || downRepeat) {
+        int8_t dir = upRepeat ? 1 : -1;
         switch (editField_) {
           case 0:
             editingAlarm_.enabled = !editingAlarm_.enabled;
@@ -187,8 +288,8 @@ void MenuSystem::handleInput(const DateTime &now) {
 
     case MenuScreen::Radio: {
       if (radio_.available()) {
-        if (up) radio_.tune(radio_.frequency10kHz() + RadioConfig::FmStep);
-        if (down) radio_.tune(radio_.frequency10kHz() - RadioConfig::FmStep);
+        if (upRepeat) radio_.tune(radio_.frequency10kHz() + RadioConfig::FmStep);
+        if (downRepeat) radio_.tune(radio_.frequency10kHz() - RadioConfig::FmStep);
         if (shortPress) radio_.setMuted(!radio_.muted());
       }
       if (longPress) screen_ = MenuScreen::Home;
@@ -201,18 +302,57 @@ void MenuSystem::handleInput(const DateTime &now) {
     }
 
     case MenuScreen::SetTime: {
-      if (up || down) {
-        int8_t dir = up ? 1 : -1;
-        if (editField_ == 0) {
-          editingHour_ = (editingHour_ + 24 + dir) % 24;
-        } else if (editField_ == 1) {
-          editingMinute_ = (editingMinute_ + 60 + dir) % 60;
+      // Fields: 0=Year, 1=Month, 2=Day, 3=Hour, 4=Minute, 5=Format (24h/
+      // 12h), 6=Sync Now, 7=Save. Sync Now fires on up/down (like Format
+      // toggling, or any value field changing) rather than on tap -- tap
+      // always just advances to the next field here, uniformly, all the
+      // way to Save. That keeps Save reachable with a plain tap-through
+      // regardless of whether the user touches Sync Now, and means
+      // greying it out when offline is simply "up/down does nothing."
+      if (upRepeat || downRepeat) {
+        int8_t dir = upRepeat ? 1 : -1;
+        switch (editField_) {
+          case 0:
+            editingYear_ = cycleYear(editingYear_, dir);
+            break;
+          case 1:
+            editingMonth_ = (uint8_t)(((editingMonth_ - 1 + 12 + dir) % 12) + 1);
+            break;
+          case 2:
+            editingDay_ = (uint8_t)(((editingDay_ - 1 + 31 + dir) % 31) + 1);
+            break;
+          case 3:
+            editingHour_ = (editingHour_ + 24 + dir) % 24;
+            break;
+          case 4:
+            editingMinute_ = (editingMinute_ + 60 + dir) % 60;
+            break;
+          case 5:
+            timeFormat_.toggle();
+            break;
+          case 6:
+            if (wifiOnline_) {
+              // Actual sync happens in main.cpp's loop() -- MenuSystem has
+              // no reference to WebDashboard, so this just raises a flag
+              // it polls (see consumeNtpSyncRequest()). Jumping back to
+              // Home gives visible feedback once it lands: the live clock
+              // updates.
+              ntpSyncRequested_ = true;
+              screen_ = MenuScreen::Home;
+            }
+            break;
         }
+        // Changing the year or month can leave Day pointing past the end
+        // of the now-selected month (e.g. Jan 31 -> Feb) -- clamp rather
+        // than let it silently overflow into the following month on save.
+        uint8_t maxDay = daysInMonth(editingYear_, editingMonth_);
+        if (editingDay_ > maxDay) editingDay_ = maxDay;
       }
       if (shortPress) {
-        if (editField_ >= 2) {
+        if (editField_ == 7) {
           if (rtc_ && rtcAvailable_) {
-            rtc_->adjust(DateTime(now.year(), now.month(), now.day(), editingHour_, editingMinute_, 0));
+            rtc_->adjust(DateTime(editingYear_, editingMonth_, editingDay_, editingHour_,
+                                  editingMinute_, 0));
           }
           screen_ = MenuScreen::Home;
         } else {
@@ -226,8 +366,8 @@ void MenuSystem::handleInput(const DateTime &now) {
     }
 
     case MenuScreen::Timezone: {
-      if (up) timezone_.next();
-      if (down) timezone_.previous();
+      if (upRepeat) timezone_.next();
+      if (downRepeat) timezone_.previous();
       if (longPress) screen_ = MenuScreen::Home;
       break;
     }
@@ -235,11 +375,13 @@ void MenuSystem::handleInput(const DateTime &now) {
 }
 
 void MenuSystem::render(const DateTime &now, const String &wifiStatusLine) {
-  static uint32_t lastClockRedrawSec = 255;  // Home redraws every tick to show live time
+  // Home's lock-screen-style clock only shows H:MM (no seconds), so it only
+  // needs to redraw once a minute rather than every tick.
+  static uint32_t lastClockRedrawMin = 61;
   bool isHomeClock = screen_ == MenuScreen::Home && alarms_.state() == AlarmState::Idle;
-  if (!dirty_ && !(isHomeClock && now.second() != lastClockRedrawSec)) return;
+  if (!dirty_ && !(isHomeClock && now.minute() != lastClockRedrawMin)) return;
   dirty_ = false;
-  lastClockRedrawSec = now.second();
+  lastClockRedrawMin = now.minute();
 
   canvas_.fillScreen(ST77XX_BLACK);
   canvas_.setCursor(0, 0);
@@ -275,12 +417,99 @@ void MenuSystem::render(const DateTime &now, const String &wifiStatusLine) {
   tft_.drawRGBBitmap(0, 0, canvas_.getBuffer(), kMenuScreenWidth, kMenuScreenHeight);
 }
 
+void MenuSystem::drawWifiStatusIcon(int16_t x, int16_t y, bool staConnected) {
+  if (!staConnected) {
+    canvas_.setTextSize(1);
+    canvas_.setFont(nullptr);
+    canvas_.setTextColor(kDimGray);
+    canvas_.setCursor(x, y + 2);
+    canvas_.print("AP");
+    return;
+  }
+  // Classic fan-plus-dot glyph: a small dot with two upward-opening arcs
+  // above it (the upper-left + upper-right quadrant mask on drawCircleHelper
+  // gives the "opening upward" half).
+  int16_t cx = x + 7;
+  int16_t cy = y + 10;
+  canvas_.fillCircle(cx, cy, 1, ST77XX_WHITE);
+  canvas_.drawCircleHelper(cx, cy, 4, 0x03, ST77XX_WHITE);
+  canvas_.drawCircleHelper(cx, cy, 7, 0x03, ST77XX_WHITE);
+}
+
+void MenuSystem::drawBatteryStatusIcon(int16_t x, int16_t y) {
+  constexpr int16_t kWidth = 20;
+  constexpr int16_t kHeight = 10;
+  bool available = battery_ && battery_->available();
+  uint16_t outline = available ? ST77XX_WHITE : kDimGray;
+  canvas_.drawRoundRect(x, y, kWidth, kHeight, 2, outline);
+  canvas_.fillRect(x + kWidth, y + 3, 2, kHeight - 6, outline);  // terminal nub
+
+  if (!available) return;  // empty outline only -- no reliable charge to show
+
+  uint16_t fillColor = battery_->isLow() ? ST77XX_RED : ST77XX_WHITE;
+  constexpr int16_t kPad = 2;
+  int16_t innerW = kWidth - kPad * 2;
+  int16_t fillW = (int16_t)((battery_->percent() / 100.0f) * innerW);
+  if (fillW > 0) canvas_.fillRect(x + kPad, y + kPad, fillW, kHeight - kPad * 2, fillColor);
+
+  // Percent, right-aligned just to the left of the icon -- classic font is
+  // an exact 6px/char, so this doesn't need a getTextBounds() round-trip.
+  char pctBuf[5];
+  snprintf(pctBuf, sizeof(pctBuf), "%.0f", battery_->percent());
+  int16_t textW = (int16_t)strlen(pctBuf) * 6;
+  canvas_.setTextSize(1);
+  canvas_.setFont(nullptr);
+  canvas_.setTextColor(ST77XX_WHITE);
+  canvas_.setCursor(x - textW - 3, y + 1);
+  canvas_.print(pctBuf);
+}
+
+void MenuSystem::drawAppIcon(int16_t x, int16_t y, IconGlyph glyph, uint16_t bgColor, bool focused) {
+  constexpr int16_t kSize = 20;
+  canvas_.fillRoundRect(x, y, kSize, kSize, 5, bgColor);
+  if (focused) canvas_.drawRoundRect(x - 1, y - 1, kSize + 2, kSize + 2, 6, ST77XX_WHITE);
+
+  int16_t cx = x + kSize / 2;
+  int16_t cy = y + kSize / 2;
+  constexpr uint16_t kGlyphColor = ST77XX_WHITE;
+
+  switch (glyph) {
+    case IconGlyph::Bell:
+      canvas_.fillCircle(cx, cy - 1, 5, kGlyphColor);
+      canvas_.fillRect(cx - 5, cy - 1, 10, 3, kGlyphColor);
+      canvas_.drawFastHLine(cx - 6, cy + 3, 12, kGlyphColor);
+      canvas_.fillCircle(cx, cy + 6, 2, kGlyphColor);
+      break;
+    case IconGlyph::Radio:
+      canvas_.fillRoundRect(cx - 6, cy - 3, 12, 8, 2, kGlyphColor);
+      canvas_.fillCircle(cx - 3, cy + 1, 2, bgColor);  // tuning dial "cutout"
+      canvas_.drawLine(cx + 4, cy - 3, cx + 7, cy - 7, kGlyphColor);  // antenna
+      break;
+    case IconGlyph::Wifi:
+      canvas_.fillCircle(cx, cy + 6, 1, kGlyphColor);
+      canvas_.drawCircleHelper(cx, cy + 6, 4, 0x03, kGlyphColor);
+      canvas_.drawCircleHelper(cx, cy + 6, 7, 0x03, kGlyphColor);
+      break;
+    case IconGlyph::Calendar:
+      canvas_.drawRoundRect(cx - 6, cy - 5, 12, 11, 1, kGlyphColor);
+      canvas_.drawFastHLine(cx - 6, cy - 2, 12, kGlyphColor);
+      canvas_.fillRect(cx - 4, cy - 7, 2, 3, kGlyphColor);
+      canvas_.fillRect(cx + 2, cy - 7, 2, 3, kGlyphColor);
+      break;
+    case IconGlyph::Globe:
+      canvas_.drawCircle(cx, cy, 6, kGlyphColor);
+      canvas_.drawFastHLine(cx - 6, cy, 12, kGlyphColor);
+      canvas_.drawFastVLine(cx, cy - 6, 12, kGlyphColor);
+      break;
+  }
+}
+
 void MenuSystem::renderHome(const DateTime &now) {
   if (alarms_.state() != AlarmState::Idle) {
-    canvas_.setTextSize(2);
     canvas_.setTextColor(ST77XX_RED);
-    printBold(28, 0, "** ALARM **");
+    printHeader(30, 0, "ALARM");
 
+    canvas_.setTextSize(2);
     canvas_.setTextColor(ST77XX_WHITE);
     if (alarms_.ringingAlarmIndex() >= 0) {
       const Alarm &a = alarms_.alarm(alarms_.ringingAlarmIndex());
@@ -288,81 +517,158 @@ void MenuSystem::renderHome(const DateTime &now) {
       canvas_.printf("%02d:%02d", a.hour, a.minute);
     }
 
-    canvas_.setTextSize(1);
     canvas_.setTextColor(ST77XX_ORANGE);
     canvas_.setCursor(0, 54);
     canvas_.println(alarms_.state() == AlarmState::Snoozed ? "Snoozed" : "Ringing");
 
-    canvas_.setTextColor(ST77XX_WHITE);
-    canvas_.setCursor(0, 90);
-    canvas_.println("tap: snooze");
-    canvas_.println("hold: dismiss");
+    printHint(0, 104, "tap:snooze hold:dismiss");
     return;
   }
 
-  // Big bold clock, centered: "HH:MM:SS" at size 3 is 8*18 = 144px wide.
-  canvas_.setTextSize(3);
-  canvas_.setTextColor(ST77XX_WHITE);
-  char clockBuf[9];
-  snprintf(clockBuf, sizeof(clockBuf), "%02d:%02d:%02d", now.hour(), now.minute(), now.second());
-  printBold(48, 4, clockBuf);
-
-  canvas_.drawFastHLine(10, 32, kMenuScreenWidth - 20, kDimGray);
+  // iOS-lock-screen-style layout: status icons top-right (no carrier/signal
+  // area -- nothing on this device maps to that), centered date, big clock,
+  // and a bottom row of app-icon-style badges instead of plain nav text.
+  // Traded away versus the old layout: the inline "Alarms set"/"No radio"/
+  // sleep-timer/battery-percent text rows are gone -- battery now only
+  // shows via the status-bar icon, and there's no at-a-glance alarm/radio/
+  // sleep-timer detail anymore (only on their own screens). Worth revisiting
+  // if that ends up missed in practice.
+  drawWifiStatusIcon(170, 3, wifiOnline_);
+  drawBatteryStatusIcon(210, 3);
 
   canvas_.setTextSize(1);
-  canvas_.setCursor(0, 40);
-
-  bool anyEnabled = false;
-  for (uint8_t i = 0; i < AlarmClock::count(); i++) {
-    if (alarms_.alarm(i).enabled) anyEnabled = true;
+  canvas_.setFont(&FreeSansBold9pt7b);
+  canvas_.setTextColor(ST77XX_WHITE);
+  char dateBuf[12];
+  snprintf(dateBuf, sizeof(dateBuf), "%s %s %u", dayOfWeekName(now.dayOfTheWeek()), monthName(now.month()),
+           now.day());
+  {
+    int16_t dx1, dy1;
+    uint16_t dw, dh;
+    canvas_.getTextBounds(dateBuf, 0, 0, &dx1, &dy1, &dw, &dh);
+    setCursorTop((kMenuScreenWidth - (int16_t)dw) / 2, 18);
   }
-  canvas_.println(anyEnabled ? "Alarms set" : "No alarms set");
+  canvas_.print(dateBuf);
+  canvas_.setFont(nullptr);
 
-  canvas_.setTextColor(radio_.available() ? ST77XX_WHITE : kDimGray);
-  if (radio_.available()) {
-    canvas_.printf("FM %.1f MHz\n", radio_.frequencyMHz());
+  // Big clock: a real proportional font at 24pt reads far lighter/cleaner
+  // than the classic bitmap font scaled up ever could -- Adafruit_GFX's
+  // bundled Free Fonts don't include a true "light" weight, so plain
+  // (non-bold) is the closest available approximation of a lock screen's
+  // thin numerals. 12-hour mode drops the leading zero (matches "2:45" on
+  // a real lock screen); 24-hour mode keeps it, since two digits is the
+  // normal convention there regardless.
+  uint8_t displayHour = now.hour();
+  bool pm = displayHour >= 12;
+  if (!timeFormat_.is24Hour()) {
+    displayHour = displayHour % 12;
+    if (displayHour == 0) displayHour = 12;
+  }
+  char clockBuf[6];
+  if (timeFormat_.is24Hour()) {
+    snprintf(clockBuf, sizeof(clockBuf), "%02d:%02d", displayHour, now.minute());
   } else {
-    canvas_.println("No radio");
+    snprintf(clockBuf, sizeof(clockBuf), "%d:%02d", displayHour, now.minute());
   }
 
-  if (radio_.sleepTimerActive()) {
-    canvas_.setTextColor(ST77XX_ORANGE);
-    canvas_.printf("Sleep: %um\n", radio_.sleepTimerRemainingMinutes());
+  canvas_.setFont(&FreeSans24pt7b);
+  int16_t cx1, cy1;
+  uint16_t clockW, clockH;
+  canvas_.getTextBounds(clockBuf, 0, 0, &cx1, &cy1, &clockW, &clockH);
+
+  uint16_t ampmW = 0, ampmH = 0;
+  if (!timeFormat_.is24Hour()) {
+    canvas_.setFont(&FreeSans9pt7b);
+    int16_t ax1, ay1;
+    uint16_t aw;
+    canvas_.getTextBounds(pm ? "PM" : "AM", 0, 0, &ax1, &ay1, &aw, &ampmH);
+    ampmW = aw + 4;
   }
 
-  if (battery_ && battery_->available()) {
-    canvas_.setTextColor(battery_->isLow() ? ST77XX_RED : ST77XX_GREEN);
-    canvas_.printf("Battery: %.0f%%\n", battery_->percent());
-  }
+  int16_t startX = (kMenuScreenWidth - (int16_t)(clockW + ampmW)) / 2;
+  constexpr int16_t kClockYTop = 36;
 
-  // Pinned to a fixed row regardless of how many status lines are above it,
-  // so the nav bar doesn't jump around as alarms/radio/battery come and go.
-  canvas_.setCursor(0, 120);
-  static const char *items[kHomeMenuItems] = {"Alarms", "Radio", "WiFi", "Time", "TZ"};
+  canvas_.setFont(&FreeSans24pt7b);
+  canvas_.setTextColor(ST77XX_WHITE);
+  setCursorTop(startX, kClockYTop);
+  canvas_.print(clockBuf);
+
+  if (!timeFormat_.is24Hour()) {
+    canvas_.setFont(&FreeSans9pt7b);
+    canvas_.setTextColor(kDimGray);
+    // Baseline-aligned near the bottom of the big digits, like a real lock
+    // screen's small AM/PM marker.
+    setCursorTop(startX + (int16_t)clockW + 4, kClockYTop + (int16_t)clockH - (int16_t)ampmH);
+    canvas_.print(pm ? "PM" : "AM");
+  }
+  canvas_.setFont(nullptr);
+
+  // Bottom nav: five 48px-wide slots spanning the full width, an app-icon
+  // badge centered in each with its label underneath.
+  struct NavItem {
+    IconGlyph glyph;
+    uint16_t bg;
+    const char *label;
+  };
+  static const NavItem items[kHomeMenuItems] = {
+      {IconGlyph::Bell, kIconOrange, "Alarm"},
+      {IconGlyph::Radio, kIconPurple, "Radio"},
+      {IconGlyph::Wifi, kIconBlue, "WiFi"},
+      {IconGlyph::Calendar, kIconRed, "Date"},
+      {IconGlyph::Globe, kIconGreen, "TZ"},
+  };
+  constexpr int16_t kSlotW = kMenuScreenWidth / kHomeMenuItems;  // 48
+  constexpr int16_t kIconY = 96;
+  constexpr int16_t kLabelY = 118;
+  canvas_.setTextSize(1);
   for (uint8_t i = 0; i < kHomeMenuItems; i++) {
-    canvas_.setTextColor(i == cursor_ ? ST77XX_WHITE : kDimGray);
-    canvas_.printf("%s%s ", i == cursor_ ? ">" : " ", items[i]);
+    bool focused = i == cursor_;
+    int16_t slotCenter = i * kSlotW + kSlotW / 2;
+    drawAppIcon(slotCenter - 10, kIconY, items[i].glyph, items[i].bg, focused);
+
+    canvas_.setFont(focused ? &FreeSansBold9pt7b : &FreeSans9pt7b);
+    canvas_.setTextColor(focused ? ST77XX_WHITE : kDimGray);
+    int16_t lx1, ly1;
+    uint16_t lw, lh;
+    canvas_.getTextBounds(items[i].label, 0, 0, &lx1, &ly1, &lw, &lh);
+    setCursorTop(slotCenter - (int16_t)lw / 2, kLabelY);
+    canvas_.print(items[i].label);
   }
+  canvas_.setFont(nullptr);
 }
 
 void MenuSystem::renderAlarmList() {
-  canvas_.println("Alarms");
-  canvas_.println();
+  printHeader(0, 0, "Alarms");
+  drawAppIcon(kHeaderIconX, kHeaderIconY, IconGlyph::Bell, kIconOrange, false);
+
+  canvas_.setTextSize(2);
+  canvas_.setCursor(0, 22);
   for (uint8_t i = 0; i < AlarmClock::count(); i++) {
     const Alarm &a = alarms_.alarm(i);
-    canvas_.printf("%s%02d:%02d %-3s %s\n", i == cursor_ ? ">" : " ", a.hour, a.minute,
-                a.enabled ? "ON" : "off", daysLabel(a.daysMask));
+    canvas_.setTextColor(i == cursor_ ? ST77XX_WHITE : kDimGray);
+    canvas_.printf("%02d:%02d %-3s %s\n", a.hour, a.minute, a.enabled ? "ON" : "off",
+                   daysLabel(a.daysMask));
   }
-  canvas_.println();
-  canvas_.println("tap: edit  hold: back");
+
+  printHint(0, 118, "tap:edit hold:back");
 }
 
 void MenuSystem::renderAlarmEdit() {
-  canvas_.printf("Edit alarm %u\n\n", cursor_ + 1);
+  char header[16];
+  snprintf(header, sizeof(header), "Alarm %u", cursor_ + 1);
+  printHeader(0, 0, header);
+  drawAppIcon(kHeaderIconX, kHeaderIconY, IconGlyph::Bell, kIconOrange, false);
+  canvas_.setCursor(0, 22);
 
   static const char *rows[] = {"Enabled", "Hour", "Minute", "Days", "Wake", "Save"};
   for (uint8_t i = 0; i < 6; i++) {
-    canvas_.print(i == editField_ ? "> " : "  ");
+    // The field currently being edited is drawn bigger and white; the rest
+    // stay compact and dim, so all 6 fields plus header/footer fit without
+    // cramming, and it's obvious at a glance which one up/down will change.
+    bool focused = i == editField_;
+    canvas_.setTextSize(focused ? 2 : 1);
+    canvas_.setTextColor(focused ? ST77XX_WHITE : kDimGray);
+    canvas_.print(focused ? "> " : "  ");
     canvas_.print(rows[i]);
     switch (i) {
       case 0:
@@ -386,78 +692,197 @@ void MenuSystem::renderAlarmEdit() {
         canvas_.println();
     }
   }
-  canvas_.println();
-  canvas_.println("tap: next  hold: cancel");
+
+  printHint(0, 122, "tap:next hold:cancel");
 }
 
 void MenuSystem::renderRadio() {
-  canvas_.println("Radio");
-  canvas_.println();
+  printHeader(0, 0, "Radio");
+  drawAppIcon(kHeaderIconX, kHeaderIconY, IconGlyph::Radio, kIconPurple, false);
+
   if (!radio_.available()) {
-    canvas_.println("No radio module");
-    canvas_.println("detected on I2C.");
-    canvas_.println();
-    canvas_.println("hold: back");
+    canvas_.setTextSize(2);
+    canvas_.setTextColor(ST77XX_WHITE);
+    printBold(0, 26, "No radio module");
+    printBold(0, 46, "detected on I2C.");
+    printHint(0, 118, "hold:back");
     return;
   }
+
   canvas_.setTextSize(2);
-  canvas_.printf("%.1f MHz\n", radio_.frequencyMHz());
-  canvas_.setTextSize(1);
-  canvas_.println();
-  canvas_.printf("Signal: %u\n", radio_.rssi());
-  canvas_.printf("Volume: %u\n", radio_.volume());
-  canvas_.println(radio_.muted() ? "Muted" : "Unmuted");
+  canvas_.setTextColor(ST77XX_WHITE);
+  char freqBuf[10];
+  snprintf(freqBuf, sizeof(freqBuf), "%.1f MHz", radio_.frequencyMHz());
+  printBold(0, 22, freqBuf);
+
+  int16_t y = 46;
+  char sigBuf[10];
+  snprintf(sigBuf, sizeof(sigBuf), "Sig %u", radio_.rssi());
+  printBold(0, y, sigBuf);
+  y += 16;
+
+  char volBuf[10];
+  snprintf(volBuf, sizeof(volBuf), "Vol %u", radio_.volume());
+  printBold(0, y, volBuf);
+  y += 16;
+
+  canvas_.setTextColor(radio_.muted() ? ST77XX_RED : ST77XX_GREEN);
+  printBold(0, y, radio_.muted() ? "Muted" : "On air");
+  y += 16;
+
   if (radio_.sleepTimerActive()) {
-    canvas_.printf("Sleep: %um\n", radio_.sleepTimerRemainingMinutes());
+    canvas_.setTextColor(ST77XX_ORANGE);
+    char sleepBuf[16];
+    snprintf(sleepBuf, sizeof(sleepBuf), "Sleep %um", radio_.sleepTimerRemainingMinutes());
+    printBold(0, y, sleepBuf);
   }
-  canvas_.println();
-  canvas_.println("up/down: tune");
-  canvas_.println("tap: mute  hold: back");
+
+  printHint(0, 118, "tap:mute hold:back");
 }
 
 void MenuSystem::renderWifiInfo(const String &wifiStatusLine) {
-  canvas_.println("WiFi");
-  canvas_.println();
-  canvas_.println(wifiStatusLine);
-  canvas_.println();
-  canvas_.println("hold: back");
+  printHeader(0, 0, "WiFi");
+  drawAppIcon(kHeaderIconX, kHeaderIconY, IconGlyph::Wifi, kIconBlue, false);
+
+  // statusLine() is already broken into a few short lines (SSID, IP,
+  // hostname, and in AP mode the dashboard login) on '\n' -- splitting
+  // them out here, instead of leaning on Print's own newline handling,
+  // lets each be drawn at size 2 instead of the size 1 this used to be. Not
+  // using printBold's double-draw here (unlike the other screens) -- on a
+  // glyph that's mostly a single stroke, like the "1" an IP address often
+  // starts with, the 1px offset reads as a stray mark rather than a
+  // heavier weight. A pathological 32-char SSID can still run past the
+  // right edge (Adafruit_GFX just clips it, no crash), but real-world
+  // SSIDs/IPs/hostnames/credentials are short enough to fit.
+  canvas_.setTextSize(2);
+  canvas_.setTextColor(ST77XX_WHITE);
+  int16_t y = 22;
+  size_t start = 0;
+  while (start <= wifiStatusLine.length()) {
+    int nl = wifiStatusLine.indexOf('\n', start);
+    String line = nl == -1 ? wifiStatusLine.substring(start) : wifiStatusLine.substring(start, nl);
+    canvas_.setCursor(0, y);
+    canvas_.print(line.c_str());
+    y += 20;
+    if (nl == -1) break;
+    start = static_cast<size_t>(nl) + 1;
+  }
+
+  printHint(0, 118, "hold:back");
 }
 
 void MenuSystem::renderSetTime() {
-  canvas_.println("Set Time");
-  canvas_.println();
+  printHeader(0, 0, "Date & Time");
+  drawAppIcon(kHeaderIconX, kHeaderIconY, IconGlyph::Calendar, kIconRed, false);
+  canvas_.setCursor(0, 24);
 
-  static const char *rows[] = {"Hour", "Minute", "Save"};
-  for (uint8_t i = 0; i < 3; i++) {
-    canvas_.print(i == editField_ ? "> " : "  ");
+  // Day-of-week isn't a field here -- it's derived from Year/Month/Day
+  // (RTClib's DateTime::dayOfTheWeek()), so getting the date right is what
+  // keeps it correct; there's nothing separate to set.
+  static const char *rows[] = {"Year", "Month", "Day", "Hour", "Minute"};
+  for (uint8_t i = 0; i < 5; i++) {
+    // The field currently being edited is drawn bigger and white; the rest
+    // stay compact and dim, so all 8 rows plus header/footer fit without
+    // cramming, and it's obvious at a glance which one up/down will change.
+    bool focused = i == editField_;
+    canvas_.setTextSize(focused ? 2 : 1);
+    canvas_.setTextColor(focused ? ST77XX_WHITE : kDimGray);
+    canvas_.print(focused ? "> " : "  ");
     canvas_.print(rows[i]);
     switch (i) {
       case 0:
-        canvas_.printf(": %02d\n", editingHour_);
+        canvas_.printf(": %u\n", editingYear_);
         break;
       case 1:
+        canvas_.print(": ");
+        canvas_.println(monthName(editingMonth_));
+        break;
+      case 2:
+        canvas_.printf(": %02d\n", editingDay_);
+        break;
+      case 3:
+        canvas_.printf(": %02d\n", editingHour_);
+        break;
+      case 4:
         canvas_.printf(": %02d\n", editingMinute_);
         break;
-      default:
-        canvas_.println();
     }
   }
+
+  // Format row: up/down toggles 24h/12h, applied (and persisted) right
+  // away -- same as the Timezone screen's immediate-apply cycling.
+  {
+    bool focused = editField_ == 5;
+    canvas_.setTextSize(focused ? 2 : 1);
+    canvas_.setTextColor(focused ? ST77XX_WHITE : kDimGray);
+    canvas_.print(focused ? "> " : "  ");
+    canvas_.print("Format: ");
+    canvas_.println(timeFormat_.is24Hour() ? "24h" : "12h");
+  }
+
+  // Sync Now: fires on up/down, not tap (see the handleInput comment) --
+  // greyed out and unresponsive when there's no uplink to sync against,
+  // the same visual language dim rows already use elsewhere for "can't
+  // interact with this right now" (e.g. Radio's entries when unavailable).
+  {
+    bool focused = editField_ == 6;
+    bool enabled = wifiOnline_;
+    canvas_.setTextSize(focused ? 2 : 1);
+    canvas_.setTextColor(!enabled ? kDimGray : (focused ? ST77XX_WHITE : kDimGray));
+    canvas_.print(focused ? "> " : "  ");
+    canvas_.println("Sync Now");
+  }
+
+  // Save: the only row that fires on tap.
+  {
+    bool focused = editField_ == 7;
+    canvas_.setTextSize(focused ? 2 : 1);
+    canvas_.setTextColor(focused ? ST77XX_WHITE : kDimGray);
+    canvas_.print(focused ? "> " : "  ");
+    canvas_.println("Save");
+  }
+
   if (!rtc_ || !rtcAvailable_) {
-    canvas_.println();
+    canvas_.setTextSize(1);
+    canvas_.setTextColor(ST77XX_RED);
+    canvas_.setCursor(0, 102);
     canvas_.println("(no RTC -- won't save)");
   }
-  canvas_.println();
-  canvas_.println("tap: next  hold: cancel");
+  printHint(0, 118, "tap:next hold:cancel");
 }
 
 void MenuSystem::renderTimezone() {
-  canvas_.println("Timezone");
-  canvas_.println();
-  canvas_.println(timezone_.label());
-  canvas_.println();
+  printHeader(0, 0, "Timezone");
+  drawAppIcon(kHeaderIconX, kHeaderIconY, IconGlyph::Globe, kIconGreen, false);
+
+  // The full label ("Central Europe (Paris/Berlin)") can run to 30
+  // characters -- too wide for a legible size on one line -- but every
+  // entry follows "Region (City)", so splitting at the parenthetical keeps
+  // both halves comfortably under the screen width even at size 2.
+  canvas_.setTextSize(2);
+  canvas_.setTextColor(ST77XX_WHITE);
+  const char *label = timezone_.label();
+  const char *paren = strchr(label, '(');
+  if (paren) {
+    char region[24];
+    size_t regionLen = static_cast<size_t>(paren - label);
+    if (regionLen > 0 && label[regionLen - 1] == ' ') regionLen--;  // trim trailing space
+    if (regionLen >= sizeof(region)) regionLen = sizeof(region) - 1;
+    memcpy(region, label, regionLen);
+    region[regionLen] = '\0';
+    printBold(0, 22, region);
+    printBold(0, 42, paren);
+  } else {
+    printBold(0, 22, label);  // e.g. "UTC" -- no city to split off
+  }
+
+  canvas_.setTextSize(1);
+  canvas_.setFont(&FreeSans9pt7b);
+  setCursorTop(0, 70);
+  canvas_.setTextColor(kDimGray);
   canvas_.println("Takes effect on the");
   canvas_.println("next NTP sync.");
-  canvas_.println();
-  canvas_.println("up/down: change");
-  canvas_.println("hold: back");
+  canvas_.setFont(nullptr);
+
+  printHint(0, 118, "up/down:change hold:back");
 }

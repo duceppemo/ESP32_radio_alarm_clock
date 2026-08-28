@@ -6,6 +6,7 @@
 #include "Preferences.h"
 #include "RadioTuner.h"
 #include "SI4735.h"
+#include "TimeFormatStore.h"
 #include "TimezoneStore.h"
 
 void setUp() {
@@ -31,12 +32,22 @@ const DateTime kNow(2026, 8, 25, 7, 0, 0);
 
 void advance(uint32_t deltaMs) { native_fake_millis_value() += deltaMs; }
 
+// MenuSelect (D0) is active-low (idle HIGH); MenuUp/MenuDown (D1/D2) are
+// wired the opposite way on this board (idle LOW) -- see DebouncedButton's
+// activeHigh. Getting this backwards leaves a pin "stuck" reading pressed
+// after a tap()/hold() call returns, which a later, unrelated tap() on a
+// different pin would then see as a still-held button once enough time
+// (native_fake_millis_value()) has passed to cross the auto-repeat delay --
+// a phantom repeat firing on whatever field happens to have focus then.
+bool isActiveHighPin(uint8_t pin) { return pin == Pins::MenuUp || pin == Pins::MenuDown; }
+
 // Short press: released well under MenuSystem's 1000ms long-press threshold.
 void tap(uint8_t pin, MenuSystem &menu) {
-  native_fake_digital_state(pin) = LOW;
+  bool activeHigh = isActiveHighPin(pin);
+  native_fake_digital_state(pin) = activeHigh ? HIGH : LOW;  // press
   advance(50);
   menu.update(kNow, "");
-  native_fake_digital_state(pin) = HIGH;
+  native_fake_digital_state(pin) = activeHigh ? LOW : HIGH;  // release -> idle
   advance(50);
   menu.update(kNow, "");
 }
@@ -47,12 +58,13 @@ void tap(uint8_t pin, MenuSystem &menu) {
 // update() call should be a no-op (longPressFired_ latches until the next
 // fresh press), which is exactly what callers rely on this helper for.
 void hold(uint8_t pin, MenuSystem &menu) {
-  native_fake_digital_state(pin) = LOW;
+  bool activeHigh = isActiveHighPin(pin);
+  native_fake_digital_state(pin) = activeHigh ? HIGH : LOW;  // press
   advance(50);
   menu.update(kNow, "");  // registers the press
   advance(1050);
   menu.update(kNow, "");  // still held -- long press fires here
-  native_fake_digital_state(pin) = HIGH;
+  native_fake_digital_state(pin) = activeHigh ? LOW : HIGH;  // release -> idle
   advance(50);
   menu.update(kNow, "");  // release -- latched, must not fire anything again
 }
@@ -66,7 +78,9 @@ void test_toggling_an_alarm_enabled_through_the_full_edit_flow() {
   Adafruit_ST7789 tft(0, 0, 0);
   TimezoneStore timezone;
   timezone.begin();
-  MenuSystem menu(tft, alarms, radio, nullptr, nullptr, timezone);
+  TimeFormatStore timeFormat;
+  timeFormat.begin();
+  MenuSystem menu(tft, alarms, radio, nullptr, nullptr, timezone, timeFormat);
   menu.begin();
 
   TEST_ASSERT_FALSE(alarms.alarm(0).enabled);
@@ -90,7 +104,9 @@ void test_editing_hour_and_minute_then_saving() {
   Adafruit_ST7789 tft(0, 0, 0);
   TimezoneStore timezone;
   timezone.begin();
-  MenuSystem menu(tft, alarms, radio, nullptr, nullptr, timezone);
+  TimeFormatStore timeFormat;
+  timeFormat.begin();
+  MenuSystem menu(tft, alarms, radio, nullptr, nullptr, timezone, timeFormat);
   menu.begin();
 
   tap(Pins::MenuSelect, menu);  // Home -> AlarmList
@@ -118,7 +134,9 @@ void test_cancelling_an_edit_with_long_press_discards_changes() {
   Adafruit_ST7789 tft(0, 0, 0);
   TimezoneStore timezone;
   timezone.begin();
-  MenuSystem menu(tft, alarms, radio, nullptr, nullptr, timezone);
+  TimeFormatStore timeFormat;
+  timeFormat.begin();
+  MenuSystem menu(tft, alarms, radio, nullptr, nullptr, timezone, timeFormat);
   menu.begin();
 
   tap(Pins::MenuSelect, menu);   // Home -> AlarmList
@@ -137,7 +155,9 @@ void test_holding_through_a_long_press_screen_change_does_not_cascade_further() 
   Adafruit_ST7789 tft(0, 0, 0);
   TimezoneStore timezone;
   timezone.begin();
-  MenuSystem menu(tft, alarms, radio, nullptr, nullptr, timezone);
+  TimeFormatStore timeFormat;
+  timeFormat.begin();
+  MenuSystem menu(tft, alarms, radio, nullptr, nullptr, timezone, timeFormat);
   menu.begin();
 
   tap(Pins::MenuSelect, menu);  // Home -> AlarmList
@@ -181,7 +201,9 @@ void test_radio_screen_tune_up_and_mute() {
   Adafruit_ST7789 tft(0, 0, 0);
   TimezoneStore timezone;
   timezone.begin();
-  MenuSystem menu(tft, alarms, radio, nullptr, nullptr, timezone);
+  TimeFormatStore timeFormat;
+  timeFormat.begin();
+  MenuSystem menu(tft, alarms, radio, nullptr, nullptr, timezone, timeFormat);
   menu.begin();
 
   tap(Pins::MenuDown, menu);    // Home cursor: Alarms(0) -> Radio(1)
@@ -205,7 +227,9 @@ void test_radio_screen_does_nothing_when_no_radio_is_present() {
   Adafruit_ST7789 tft(0, 0, 0);
   TimezoneStore timezone;
   timezone.begin();
-  MenuSystem menu(tft, alarms, radio, nullptr, nullptr, timezone);
+  TimeFormatStore timeFormat;
+  timeFormat.begin();
+  MenuSystem menu(tft, alarms, radio, nullptr, nullptr, timezone, timeFormat);
   menu.begin();
 
   tap(Pins::MenuDown, menu);    // Home cursor: Alarms(0) -> Radio(1)
@@ -227,7 +251,9 @@ void test_ringing_alarm_short_press_snoozes() {
   Adafruit_ST7789 tft(0, 0, 0);
   TimezoneStore timezone;
   timezone.begin();
-  MenuSystem menu(tft, alarms, radio, nullptr, nullptr, timezone);
+  TimeFormatStore timeFormat;
+  timeFormat.begin();
+  MenuSystem menu(tft, alarms, radio, nullptr, nullptr, timezone, timeFormat);
   menu.begin();
 
   Alarm a;
@@ -252,7 +278,9 @@ void test_ringing_alarm_long_press_dismisses() {
   Adafruit_ST7789 tft(0, 0, 0);
   TimezoneStore timezone;
   timezone.begin();
-  MenuSystem menu(tft, alarms, radio, nullptr, nullptr, timezone);
+  TimeFormatStore timeFormat;
+  timeFormat.begin();
+  MenuSystem menu(tft, alarms, radio, nullptr, nullptr, timezone, timeFormat);
   menu.begin();
 
   Alarm a;
@@ -278,21 +306,28 @@ void test_set_time_saves_the_new_hour_and_minute() {
   Adafruit_ST7789 tft(0, 0, 0);
   TimezoneStore timezone;
   timezone.begin();
-  MenuSystem menu(tft, alarms, radio, nullptr, &rtc, timezone);
+  TimeFormatStore timeFormat;
+  timeFormat.begin();
+  MenuSystem menu(tft, alarms, radio, nullptr, &rtc, timezone, timeFormat);
   menu.begin();
 
   tap(Pins::MenuDown, menu);    // Home cursor: Alarms(0) -> Radio(1)
   tap(Pins::MenuDown, menu);    // Radio(1) -> WiFi(2)
   tap(Pins::MenuDown, menu);    // WiFi(2) -> Time(3)
-  tap(Pins::MenuSelect, menu);  // enter Set Time, field 0 = Hour (starts at kNow's 7:00)
+  tap(Pins::MenuSelect, menu);  // enter Set Time, field 0 = Year
+  tap(Pins::MenuSelect, menu);  // -> field 1 = Month
+  tap(Pins::MenuSelect, menu);  // -> field 2 = Day
+  tap(Pins::MenuSelect, menu);  // -> field 3 = Hour (starts at kNow's 7:00)
 
   tap(Pins::MenuUp, menu);      // hour 7 -> 8
   tap(Pins::MenuUp, menu);      // hour 8 -> 9
 
-  tap(Pins::MenuSelect, menu);  // advance to field 1 = Minute
+  tap(Pins::MenuSelect, menu);  // advance to field 4 = Minute
   tap(Pins::MenuUp, menu);      // minute 0 -> 1
 
-  tap(Pins::MenuSelect, menu);  // advance to field 2 = Save
+  tap(Pins::MenuSelect, menu);  // advance to field 5 = Format (left untouched)
+  tap(Pins::MenuSelect, menu);  // advance to field 6 = Sync Now (left untouched)
+  tap(Pins::MenuSelect, menu);  // advance to field 7 = Save
   tap(Pins::MenuSelect, menu);  // commit
 
   TEST_ASSERT_EQUAL(9, rtc.now().hour());
@@ -301,6 +336,114 @@ void test_set_time_saves_the_new_hour_and_minute() {
   TEST_ASSERT_EQUAL(kNow.year(), rtc.now().year());
   TEST_ASSERT_EQUAL(kNow.month(), rtc.now().month());
   TEST_ASSERT_EQUAL(kNow.day(), rtc.now().day());
+}
+
+void test_set_time_format_field_toggles_between_24h_and_12h() {
+  AlarmClock alarms;
+  alarms.begin();
+  RadioTuner radio;
+  radio.begin();
+  RTC_DS3231 rtc;
+  rtc.adjust(kNow);
+  Adafruit_ST7789 tft(0, 0, 0);
+  TimezoneStore timezone;
+  timezone.begin();
+  TimeFormatStore timeFormat;
+  timeFormat.begin();
+  MenuSystem menu(tft, alarms, radio, nullptr, &rtc, timezone, timeFormat);
+  menu.begin();
+
+  TEST_ASSERT_TRUE(timeFormat.is24Hour());
+
+  tap(Pins::MenuDown, menu);
+  tap(Pins::MenuDown, menu);
+  tap(Pins::MenuDown, menu);
+  tap(Pins::MenuSelect, menu);  // enter Set Time, field 0 = Year
+  tap(Pins::MenuSelect, menu);  // -> field 1 = Month
+  tap(Pins::MenuSelect, menu);  // -> field 2 = Day
+  tap(Pins::MenuSelect, menu);  // -> field 3 = Hour
+  tap(Pins::MenuSelect, menu);  // -> field 4 = Minute
+  tap(Pins::MenuSelect, menu);  // -> field 5 = Format
+  tap(Pins::MenuUp, menu);      // toggle 24h -> 12h
+
+  TEST_ASSERT_FALSE(timeFormat.is24Hour());
+}
+
+// Regression: Sync Now and Save used to be two separate terminal fields in
+// the same sequential walk (Sync Now before Save), so tapping through the
+// screen to reach Save would fire an unwanted NTP sync -- and exit without
+// saving -- the instant the cursor landed on Sync Now. Sync Now now fires
+// on up/down instead of tap, so a plain tap-through always reaches Save
+// untouched, and Sync Now only fires when the user deliberately presses
+// up/down while sitting on that row.
+void test_set_time_sync_now_requests_sync_instead_of_saving() {
+  AlarmClock alarms;
+  alarms.begin();
+  RadioTuner radio;
+  radio.begin();
+  RTC_DS3231 rtc;
+  rtc.adjust(kNow);
+  Adafruit_ST7789 tft(0, 0, 0);
+  TimezoneStore timezone;
+  timezone.begin();
+  TimeFormatStore timeFormat;
+  timeFormat.begin();
+  MenuSystem menu(tft, alarms, radio, nullptr, &rtc, timezone, timeFormat);
+  menu.begin();
+
+  tap(Pins::MenuDown, menu);
+  tap(Pins::MenuDown, menu);
+  tap(Pins::MenuDown, menu);
+  tap(Pins::MenuSelect, menu);  // enter Set Time, field 0 = Year
+  tap(Pins::MenuSelect, menu);  // -> field 1 = Month
+  tap(Pins::MenuSelect, menu);  // -> field 2 = Day
+  tap(Pins::MenuSelect, menu);  // -> field 3 = Hour
+  tap(Pins::MenuUp, menu);      // hour 7 -> 8 (must NOT be saved by Sync Now)
+  tap(Pins::MenuSelect, menu);  // -> field 4 = Minute
+  tap(Pins::MenuSelect, menu);  // -> field 5 = Format
+  tap(Pins::MenuSelect, menu);  // -> field 6 = Sync Now
+  tap(Pins::MenuUp, menu);      // trigger Sync Now (online by default)
+
+  TEST_ASSERT_TRUE(menu.consumeNtpSyncRequest());
+  TEST_ASSERT_EQUAL(kNow.hour(), rtc.now().hour());  // untouched -- no rtc_->adjust() call
+}
+
+// Regression: the row must not fire (or advance the sync flag) while
+// offline -- that's what "greyed out" means functionally, not just visually.
+void test_set_time_sync_now_does_nothing_while_offline() {
+  AlarmClock alarms;
+  alarms.begin();
+  RadioTuner radio;
+  radio.begin();
+  RTC_DS3231 rtc;
+  rtc.adjust(kNow);
+  Adafruit_ST7789 tft(0, 0, 0);
+  TimezoneStore timezone;
+  timezone.begin();
+  TimeFormatStore timeFormat;
+  timeFormat.begin();
+  MenuSystem menu(tft, alarms, radio, nullptr, &rtc, timezone, timeFormat);
+  menu.begin();
+
+  tap(Pins::MenuDown, menu);
+  tap(Pins::MenuDown, menu);
+  tap(Pins::MenuDown, menu);
+  tap(Pins::MenuSelect, menu);  // enter Set Time, field 0 = Year
+  tap(Pins::MenuSelect, menu);  // -> field 1 = Month
+  tap(Pins::MenuSelect, menu);  // -> field 2 = Day
+  tap(Pins::MenuSelect, menu);  // -> field 3 = Hour
+  tap(Pins::MenuSelect, menu);  // -> field 4 = Minute
+  tap(Pins::MenuSelect, menu);  // -> field 5 = Format
+  tap(Pins::MenuSelect, menu);  // -> field 6 = Sync Now
+
+  native_fake_digital_state(Pins::MenuUp) = HIGH;  // press, offline this time
+  advance(50);
+  menu.update(kNow, "", /*wifiOnline=*/false);
+  native_fake_digital_state(Pins::MenuUp) = LOW;
+  advance(50);
+  menu.update(kNow, "", /*wifiOnline=*/false);
+
+  TEST_ASSERT_FALSE(menu.consumeNtpSyncRequest());
 }
 
 void test_set_time_cancelled_with_long_press_does_not_save() {
@@ -313,13 +456,18 @@ void test_set_time_cancelled_with_long_press_does_not_save() {
   Adafruit_ST7789 tft(0, 0, 0);
   TimezoneStore timezone;
   timezone.begin();
-  MenuSystem menu(tft, alarms, radio, nullptr, &rtc, timezone);
+  TimeFormatStore timeFormat;
+  timeFormat.begin();
+  MenuSystem menu(tft, alarms, radio, nullptr, &rtc, timezone, timeFormat);
   menu.begin();
 
   tap(Pins::MenuDown, menu);
   tap(Pins::MenuDown, menu);
   tap(Pins::MenuDown, menu);
-  tap(Pins::MenuSelect, menu);  // enter Set Time
+  tap(Pins::MenuSelect, menu);  // enter Set Time, field 0 = Year
+  tap(Pins::MenuSelect, menu);  // -> field 1 = Month
+  tap(Pins::MenuSelect, menu);  // -> field 2 = Day
+  tap(Pins::MenuSelect, menu);  // -> field 3 = Hour
   tap(Pins::MenuUp, menu);      // hour 7 -> 8 (working copy only)
   hold(Pins::MenuSelect, menu); // cancel
 
@@ -334,16 +482,17 @@ void test_set_time_with_no_rtc_does_not_crash() {
   Adafruit_ST7789 tft(0, 0, 0);
   TimezoneStore timezone;
   timezone.begin();
-  MenuSystem menu(tft, alarms, radio, nullptr, nullptr, timezone);
+  TimeFormatStore timeFormat;
+  timeFormat.begin();
+  MenuSystem menu(tft, alarms, radio, nullptr, nullptr, timezone, timeFormat);
   menu.begin();
 
   tap(Pins::MenuDown, menu);
   tap(Pins::MenuDown, menu);
   tap(Pins::MenuDown, menu);
-  tap(Pins::MenuSelect, menu);  // enter Set Time
-  tap(Pins::MenuSelect, menu);  // -> field 1
-  tap(Pins::MenuSelect, menu);  // -> field 2 (Save)
-  tap(Pins::MenuSelect, menu);  // commit with a null rtc_ -- must not crash
+  tap(Pins::MenuSelect, menu);  // enter Set Time, field 0 = Year
+  for (int i = 0; i < 7; i++) tap(Pins::MenuSelect, menu);  // walk fields 1-7
+  tap(Pins::MenuSelect, menu);  // commit (field 7 = Save) with a null rtc_ -- must not crash
 
   TEST_ASSERT_TRUE(true);  // reaching here without crashing is the assertion
 }
@@ -363,17 +512,24 @@ void test_set_rtc_unavailable_skips_saving_even_with_a_non_null_rtc() {
   Adafruit_ST7789 tft(0, 0, 0);
   TimezoneStore timezone;
   timezone.begin();
-  MenuSystem menu(tft, alarms, radio, nullptr, &rtc, timezone);
+  TimeFormatStore timeFormat;
+  timeFormat.begin();
+  MenuSystem menu(tft, alarms, radio, nullptr, &rtc, timezone, timeFormat);
   menu.begin();
   menu.setRtcAvailable(false);
 
   tap(Pins::MenuDown, menu);
   tap(Pins::MenuDown, menu);
   tap(Pins::MenuDown, menu);
-  tap(Pins::MenuSelect, menu);  // enter Set Time, field 0 = Hour
+  tap(Pins::MenuSelect, menu);  // enter Set Time, field 0 = Year
+  tap(Pins::MenuSelect, menu);  // -> field 1 = Month
+  tap(Pins::MenuSelect, menu);  // -> field 2 = Day
+  tap(Pins::MenuSelect, menu);  // -> field 3 = Hour
   tap(Pins::MenuUp, menu);      // hour 7 -> 8
-  tap(Pins::MenuSelect, menu);  // -> field 1
-  tap(Pins::MenuSelect, menu);  // -> field 2 (Save)
+  tap(Pins::MenuSelect, menu);  // -> field 4 = Minute
+  tap(Pins::MenuSelect, menu);  // -> field 5 = Format
+  tap(Pins::MenuSelect, menu);  // -> field 6 = Sync Now
+  tap(Pins::MenuSelect, menu);  // -> field 7 = Save
   tap(Pins::MenuSelect, menu);  // commit -- must not touch the (unavailable) rtc
 
   TEST_ASSERT_EQUAL(kNow.hour(), rtc.now().hour());
@@ -387,7 +543,9 @@ void test_timezone_screen_cycles_selection() {
   Adafruit_ST7789 tft(0, 0, 0);
   TimezoneStore timezone;
   timezone.begin();
-  MenuSystem menu(tft, alarms, radio, nullptr, nullptr, timezone);
+  TimeFormatStore timeFormat;
+  timeFormat.begin();
+  MenuSystem menu(tft, alarms, radio, nullptr, nullptr, timezone, timeFormat);
   menu.begin();
 
   TEST_ASSERT_EQUAL(0, timezone.index());  // UTC by default
@@ -422,6 +580,9 @@ int main(int argc, char **argv) {
   RUN_TEST(test_ringing_alarm_short_press_snoozes);
   RUN_TEST(test_ringing_alarm_long_press_dismisses);
   RUN_TEST(test_set_time_saves_the_new_hour_and_minute);
+  RUN_TEST(test_set_time_format_field_toggles_between_24h_and_12h);
+  RUN_TEST(test_set_time_sync_now_requests_sync_instead_of_saving);
+  RUN_TEST(test_set_time_sync_now_does_nothing_while_offline);
   RUN_TEST(test_set_time_cancelled_with_long_press_does_not_save);
   RUN_TEST(test_set_time_with_no_rtc_does_not_crash);
   RUN_TEST(test_set_rtc_unavailable_skips_saving_even_with_a_non_null_rtc);

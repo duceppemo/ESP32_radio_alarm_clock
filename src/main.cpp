@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <Wire.h>
+#include <esp_system.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_ST7789.h>
 #include <RTClib.h>
@@ -16,6 +17,7 @@
 #include "RadioTuner.h"
 #include "SnoozeController.h"
 #include "StateLock.h"
+#include "TimeFormatStore.h"
 #include "TimezoneStore.h"
 #include "WakeController.h"
 #include "WebDashboard.h"
@@ -29,13 +31,14 @@ Adafruit_VEML7700 lightSensor;
 Adafruit_7segment sevenSegment = Adafruit_7segment();
 BatteryMonitor battery;
 TimezoneStore timezoneStore;
+TimeFormatStore timeFormat;
 
 AlarmClock alarmClock;
 RadioTuner radioTuner;
 AlarmSound alarmSound;
 WakeController wakeController(alarmClock, radioTuner, alarmSound);
 SnoozeController snoozeController(alarmClock, radioTuner);
-MenuSystem menu(tft, alarmClock, radioTuner, &battery, &rtc, timezoneStore);
+MenuSystem menu(tft, alarmClock, radioTuner, &battery, &rtc, timezoneStore, timeFormat);
 WebDashboard dashboard(alarmClock, radioTuner, &rtc, &battery, timezoneStore);
 
 DebouncedButton volumeUpButton(Pins::VolumeUp);
@@ -93,6 +96,44 @@ static void reportStatus(const char *label, bool ok) {
 void setup() {
   Serial.begin(115200);
 
+  // esp_reset_reason() reads a value the chip stores in RTC memory across
+  // resets, so it's reliable even when a crash happens too abruptly for
+  // anything to reach the serial port beforehand (a brownout in particular
+  // never prints anything on its own) -- cheap enough to just always log.
+  const char *resetReason = "UNKNOWN";
+  switch (esp_reset_reason()) {
+    case ESP_RST_POWERON:
+      resetReason = "POWERON (normal power-up)";
+      break;
+    case ESP_RST_EXT:
+      resetReason = "EXT (reset pin/button)";
+      break;
+    case ESP_RST_SW:
+      resetReason = "SW (esp_restart() called)";
+      break;
+    case ESP_RST_PANIC:
+      resetReason = "PANIC (crash)";
+      break;
+    case ESP_RST_INT_WDT:
+      resetReason = "INT_WDT (interrupt watchdog)";
+      break;
+    case ESP_RST_TASK_WDT:
+      resetReason = "TASK_WDT (task watchdog)";
+      break;
+    case ESP_RST_WDT:
+      resetReason = "WDT (other watchdog)";
+      break;
+    case ESP_RST_BROWNOUT:
+      resetReason = "BROWNOUT (power dip)";
+      break;
+    case ESP_RST_DEEPSLEEP:
+      resetReason = "DEEPSLEEP wake";
+      break;
+    default:
+      break;
+  }
+  Serial.printf("Reset reason: %s\n", resetReason);
+
   pinMode(TFT_I2C_POWER, OUTPUT);
   digitalWrite(TFT_I2C_POWER, HIGH);
 
@@ -145,9 +186,11 @@ void setup() {
     sevenSegment.writeDisplay();
   }
 
-  reportStatus("Battery", battery.begin());
+  battery.begin();
+  reportStatus("Battery", battery.available());
   reportStatus("Buzzer", alarmSound.begin());
   timezoneStore.begin();
+  timeFormat.begin();
 
   pinMode(Pins::VolumeUp, INPUT_PULLUP);
   pinMode(Pins::VolumeDown, INPUT_PULLUP);
@@ -170,7 +213,16 @@ void loop() {
   // Fast path: keeps menu button response, the web server, and any playing
   // alarm tone snappy.
   dashboard.update();
-  menu.update(cachedNow, dashboard.statusLine());
+  menu.update(cachedNow, dashboard.statusLine(), dashboard.isOnline());
+  // "Sync Now" on the Date & Time screen: blocks for up to 5s (same as the
+  // automatic daily resync already does from within this same locked
+  // loop() body), so skip it outright if we're not even online rather than
+  // block pointlessly. MenuSystem also greys the row out and won't raise
+  // the request at all while offline, but isOnline() can still have
+  // flipped between that check and this one.
+  if (menu.consumeNtpSyncRequest() && dashboard.isOnline()) {
+    dashboard.syncTimeFromNtp();
+  }
   wakeController.tickFast();
 
   volumeUpButton.update();
@@ -197,7 +249,25 @@ void loop() {
     Serial.printf("%02d:%02d:%02d\n", cachedNow.hour(), cachedNow.minute(), cachedNow.second());
 
     if (sevenSegmentOk && alarmClock.state() == AlarmState::Idle) {
-      sevenSegment.print(cachedNow.hour() * 100 + cachedNow.minute(), DEC);
+      if (timeFormat.is24Hour()) {
+        sevenSegment.print(cachedNow.hour() * 100 + cachedNow.minute(), DEC);
+      } else {
+        // No letters on a 4-digit 7-segment, so AM/PM rides on the last
+        // digit's decimal point instead (lit = PM) -- a common convention
+        // on this style of display. Leading hour digit is blanked rather
+        // than shown as 0 (e.g. "9:05", not "09:05").
+        uint8_t displayHour = cachedNow.hour() % 12;
+        if (displayHour == 0) displayHour = 12;
+        bool pm = cachedNow.hour() >= 12;
+        if (displayHour >= 10) {
+          sevenSegment.writeDigitNum(0, displayHour / 10);
+        } else {
+          sevenSegment.writeDigitRaw(0, 0x00);
+        }
+        sevenSegment.writeDigitNum(1, displayHour % 10);
+        sevenSegment.writeDigitNum(3, cachedNow.minute() / 10);
+        sevenSegment.writeDigitNum(4, cachedNow.minute() % 10, pm);
+      }
       sevenSegment.drawColon(cachedNow.second() % 2 == 0);
       sevenSegment.writeDisplay();
     }
