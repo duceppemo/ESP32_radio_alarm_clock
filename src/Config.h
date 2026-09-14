@@ -47,6 +47,12 @@ constexpr uint8_t DeadAirRssiThreshold = 10;
 }  // namespace AlarmConfig
 
 namespace RadioConfig {
+// Default (Americas/Europe -- they share the same FM band) tuning range;
+// Japan's is genuinely different (76.0-95.0MHz) and lives in RegionStore's
+// own table instead, which RadioTuner reads from rather than these
+// constants once a chip is present. Still the fallback used before a
+// region is known, and the band RegionStore's Americas/Europe entries
+// reference.
 constexpr uint16_t FmBandStart = 8750;   // 87.50 MHz, in 10 kHz units
 constexpr uint16_t FmBandEnd = 10800;    // 108.00 MHz
 constexpr uint16_t FmStep = 10;          // 100 kHz steps
@@ -58,6 +64,20 @@ constexpr uint16_t MaxSleepTimerMinutes = 120;
 // The snooze button doubles as a sleep-timer toggle when pressed while no
 // alarm is ringing and the radio is on -- see SnoozeController.
 constexpr uint16_t DefaultSleepTimerMinutes = 30;
+
+// RDS Clock Time fallback sync (see RadioTuner::updateRdsSync()) -- only
+// runs while the radio is muted/idle and NTP hasn't synced. Interval/window
+// are unverified against real broadcast RDS timing (same caveat as
+// DeadAirRssiThreshold below): CT groups aren't guaranteed to repeat often,
+// so the window errs generous since this only ever runs in the background.
+constexpr uint32_t RdsFallbackIntervalMs = 30UL * 60 * 1000;  // 30 min between attempts
+constexpr uint32_t RdsFallbackWindowMs = 60UL * 1000;         // listen up to 60s per attempt
+
+// Plausibility bound on a decoded RDS CT year -- the library's own
+// getRdsDateTime() already rejects bad hour/minute/day/month, but not an
+// implausible year, which a noisy MJD decode could still produce.
+constexpr uint16_t MinPlausibleRdsYear = 2024;
+constexpr uint16_t MaxPlausibleRdsYear = 2099;  // matches the DS3231's ~2000-2099 range
 }  // namespace RadioConfig
 
 namespace NetConfig {

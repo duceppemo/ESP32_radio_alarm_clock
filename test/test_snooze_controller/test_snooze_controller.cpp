@@ -3,6 +3,7 @@
 #include "AlarmClock.h"
 #include "Preferences.h"
 #include "RadioTuner.h"
+#include "RegionStore.h"
 #include "SI4735.h"
 #include "SnoozeController.h"
 
@@ -20,7 +21,9 @@ const DateTime kNow(2026, 8, 25, 7, 0, 0);
 void test_press_while_ringing_snoozes_the_alarm() {
   AlarmClock alarms;
   alarms.begin();
-  RadioTuner radio;
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
   radio.begin();
   SnoozeController snooze(alarms, radio);
 
@@ -41,7 +44,9 @@ void test_press_while_ringing_snoozes_the_alarm() {
 void test_press_while_ringing_does_not_touch_the_radio() {
   AlarmClock alarms;
   alarms.begin();
-  RadioTuner radio;
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
   radio.begin();
   radio.setMuted(false);
   SnoozeController snooze(alarms, radio);
@@ -64,7 +69,9 @@ void test_press_while_ringing_does_not_touch_the_radio() {
 void test_press_while_idle_and_radio_on_starts_sleep_timer() {
   AlarmClock alarms;
   alarms.begin();
-  RadioTuner radio;
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
   radio.begin();
   radio.setMuted(false);
   SnoozeController snooze(alarms, radio);
@@ -78,7 +85,9 @@ void test_press_while_idle_and_radio_on_starts_sleep_timer() {
 void test_second_press_while_sleep_timer_active_cancels_it() {
   AlarmClock alarms;
   alarms.begin();
-  RadioTuner radio;
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
   radio.begin();
   radio.setMuted(false);
   SnoozeController snooze(alarms, radio);
@@ -93,7 +102,9 @@ void test_second_press_while_sleep_timer_active_cancels_it() {
 void test_press_while_idle_and_radio_muted_does_nothing() {
   AlarmClock alarms;
   alarms.begin();
-  RadioTuner radio;
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
   radio.begin();
   radio.setMuted(true);
   SnoozeController snooze(alarms, radio);

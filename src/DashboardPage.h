@@ -66,6 +66,10 @@ static const char kDashboardHtml[] = R"rawliteral(
 
 <section>
   <h2>Radio</h2>
+  <label>Region
+    <select id="regionSelect" onchange="setRegion()"></select>
+  </label>
+  <div class="status">Sets FM de-emphasis and tuning band for your region.</div>
   <div class="row">
     <span id="radioFreq" style="font-size:1.4rem">--.- MHz</span>
     <button onclick="radioAction('seekDown')">&laquo; Seek</button>
@@ -157,6 +161,8 @@ async function refresh() {
     if (tzSelect.dataset.loaded) tzSelect.value = status.timezoneIndex;
 
     const radio = status.radio;
+    const regionSelect = document.getElementById('regionSelect');
+    if (regionSelect.dataset.loaded) regionSelect.value = radio.regionIndex;
     document.getElementById('radioFreq').textContent = (radio.frequency10kHz / 100).toFixed(1) + ' MHz';
     document.getElementById('volumeValue').textContent = radio.volume;
     // Same clobbering guard as the alarm list/username field above --
@@ -215,6 +221,17 @@ async function loadTimezoneOptions() {
   } catch (e) {}
 }
 
+// Same one-time-load pattern as loadTimezoneOptions() above.
+async function loadRegionOptions() {
+  try {
+    const radio = await api('/api/radio');
+    const regionSelect = document.getElementById('regionSelect');
+    regionSelect.innerHTML = radio.regionOptions.map((label, i) => `<option value="${i}">${label}</option>`).join('');
+    regionSelect.value = radio.regionIndex;
+    regionSelect.dataset.loaded = 'true';
+  } catch (e) {}
+}
+
 async function saveWifi() {
   await api('/api/wifi', { method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ssid: document.getElementById('wifiSsid').value, password: document.getElementById('wifiPassword').value }) });
@@ -239,6 +256,11 @@ async function setTimezone() {
   await api('/api/timezone', { method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ index }) });
   refresh();
+}
+
+async function setRegion() {
+  const index = parseInt(document.getElementById('regionSelect').value, 10);
+  await radioAction('setRegion', index);
 }
 
 function tuneRadio() {
@@ -291,6 +313,7 @@ async function importSettings() {
 }
 
 loadTimezoneOptions();
+loadRegionOptions();
 refresh();
 setInterval(refresh, 2000);
 </script>

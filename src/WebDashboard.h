@@ -7,6 +7,7 @@
 #include "BatteryMonitor.h"
 #include "Config.h"
 #include "RadioTuner.h"
+#include "RegionStore.h"
 #include "TimezoneStore.h"
 
 // Hosts the setup/status web dashboard described in the README's "Planned
@@ -30,7 +31,7 @@
 class WebDashboard {
  public:
   WebDashboard(AlarmClock &alarms, RadioTuner &radio, RTC_DS3231 *rtc, BatteryMonitor *battery,
-               TimezoneStore &timezone);
+               TimezoneStore &timezone, RegionStore &region);
 
   void begin();
   // rtc is constructed and wired up before rtc->begin() is ever called
@@ -53,6 +54,15 @@ class WebDashboard {
   // (getLocalTime() just times out), so this isn't required, only a way to
   // skip a pointless multi-second block when already known to be offline.
   bool isOnline() const { return !apMode_; }
+
+  // True once syncTimeFromNtp() has actually succeeded at least once this
+  // boot -- lastNtpSyncMs_ only tracks the last *attempt* (deliberately, to
+  // avoid retrying every loop tick after a failure), so this is what
+  // main.cpp needs to correctly gate the RDS Clock Time fallback sync
+  // ("NTP unavailable or hasn't synced yet" -- never reset back to false,
+  // since a later failed daily resync shouldn't suddenly re-arm the RDS
+  // fallback when the RTC is already NTP-accurate from the last one).
+  bool hasSyncedFromNtpSuccessfully() const { return ntpSyncSucceededOnce_; }
 
   // Forces an immediate NTP resync -- normally this happens automatically
   // (once on boot, then daily), but MenuSystem's Date & Time screen offers
@@ -88,6 +98,7 @@ class WebDashboard {
   bool rtcAvailable_ = true;
   BatteryMonitor *battery_;
   TimezoneStore &timezone_;
+  RegionStore &region_;
 
   bool apMode_ = true;
   String staSsid_;
@@ -95,4 +106,5 @@ class WebDashboard {
   String adminPassword_;
   uint32_t restartAtMs_ = 0;   // 0 = no restart pending
   uint32_t lastNtpSyncMs_ = 0; // 0 = never synced yet this boot
+  bool ntpSyncSucceededOnce_ = false;
 };

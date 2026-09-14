@@ -15,23 +15,45 @@ bool RadioTuner::begin(uint8_t resetPin) {
   if (!available_) return false;
 
   si4735_.setup(resetPin, FM_CURRENT_MODE);
-  si4735_.setFM(RadioConfig::FmBandStart, RadioConfig::FmBandEnd,
-                RadioConfig::FmDefaultFreq, RadioConfig::FmStep);
+  applyRegion();  // sets de-emphasis + band, tunes to the persisted frequency
   si4735_.setVolume(volume_);
-
-  Preferences prefs;
-  prefs.begin(kNamespace, true);
-  uint16_t lastFreq = prefs.getUShort(kFreqKey, RadioConfig::FmDefaultFreq);
-  prefs.end();
-  tune(lastFreq);
+  // RDS block-error tolerance -- 1/2/2/2/2 (max errors allowed per block
+  // before it's discarded) is the PU2CLR SI4735 library's own example
+  // value, not independently tuned; fine for a bedside-clock-grade CT
+  // fallback where an occasional dropped group just means trying again a
+  // second later. FIFO count 1 means an interrupt/ready condition is
+  // signaled as soon as a single group arrives -- polled explicitly here
+  // rather than via interrupt, so this just controls FIFO depth.
+  si4735_.setRdsConfig(1, 2, 2, 2, 2);
+  si4735_.setFifoCount(1);
   return true;
 }
 
+void RadioTuner::applyRegion() {
+  if (!available_) return;
+  const RegionEntry &r = region_.current();
+  si4735_.setFMDeEmphasis(r.fmDeEmphasis);
+
+  // Re-clamp the persisted frequency into the new region's band -- e.g.
+  // switching from Americas/Europe (87.5-108.0MHz) to Japan
+  // (76.0-95.0MHz) can otherwise leave the chip tuned outside its own
+  // configured band.
+  Preferences prefs;
+  prefs.begin(kNamespace, true);
+  uint16_t freq = prefs.getUShort(kFreqKey, RadioConfig::FmDefaultFreq);
+  prefs.end();
+  freq = constrain(freq, r.fmBandStart, r.fmBandEnd);
+
+  si4735_.setFM(r.fmBandStart, r.fmBandEnd, freq, RadioConfig::FmStep);
+}
+
 void RadioTuner::tune(uint16_t frequency10kHz) {
+  rdsFallbackActive_ = false;  // real user action cancels a background sync attempt
   // The preference is persisted either way (matches volume_/muted_ below)
   // so it's already in place for whenever a chip does get connected -- only
   // the actual hardware write is skipped without one.
-  frequency10kHz = constrain(frequency10kHz, RadioConfig::FmBandStart, RadioConfig::FmBandEnd);
+  const RegionEntry &r = region_.current();
+  frequency10kHz = constrain(frequency10kHz, r.fmBandStart, r.fmBandEnd);
   Preferences prefs;
   prefs.begin(kNamespace, false);
   prefs.putUShort(kFreqKey, frequency10kHz);
@@ -41,10 +63,12 @@ void RadioTuner::tune(uint16_t frequency10kHz) {
 }
 
 void RadioTuner::seekUp() {
+  rdsFallbackActive_ = false;
   if (!available_) return;
   si4735_.seekStationUp();
 }
 void RadioTuner::seekDown() {
+  rdsFallbackActive_ = false;
   if (!available_) return;
   si4735_.seekStationDown();
 }
@@ -66,6 +90,7 @@ void RadioTuner::volumeUp() { setVolume(min<uint8_t>(volume_ + 1, 63)); }
 void RadioTuner::volumeDown() { setVolume(volume_ > 0 ? volume_ - 1 : 0); }
 
 void RadioTuner::setMuted(bool muted) {
+  if (!muted) rdsFallbackActive_ = false;  // unmuting means the user wants to listen now
   muted_ = muted;
   if (!available_) return;
   si4735_.setAudioMute(muted_);
@@ -127,6 +152,62 @@ void RadioTuner::update() {
     setMuted(true);
     sleepTimerEndMs_ = 0;
   }
+}
+
+void RadioTuner::pollRdsForTime() {
+  if (rdsTimeReady_) return;  // unconsumed result already waiting -- don't overwrite it
+  si4735_.rdsBeginQuery();
+  uint16_t year, month, day, hour, minute;
+  if (!si4735_.getRdsDateTime(&year, &month, &day, &hour, &minute)) return;
+  // The library's own getRdsDateTime() already rejects hour>24, minute>60,
+  // day>31, month>12 -- year is the one implausible case it doesn't check,
+  // and RDS data (or the MJD-to-calendar conversion) can be noisy.
+  if (year < RadioConfig::MinPlausibleRdsYear || year > RadioConfig::MaxPlausibleRdsYear) return;
+  rdsTime_ = DateTime(year, month, day, hour, minute, 0);
+  rdsTimeReady_ = true;
+  rdsFallbackActive_ = false;  // got what we needed
+}
+
+void RadioTuner::updateRdsSync(bool needsFallback) {
+  if (!available_) return;
+
+  if (!muted_) {
+    // Radio is in active use -- passively harvest any CT group for free
+    // (reading data that's already flowing), but never start or continue
+    // a background retune attempt over what the user is listening to.
+    rdsFallbackActive_ = false;
+    pollRdsForTime();
+    return;
+  }
+
+  if (rdsFallbackActive_) {
+    pollRdsForTime();
+    if (rdsTimeReady_ || millis() - rdsFallbackStartMs_ >= RadioConfig::RdsFallbackWindowMs) {
+      rdsFallbackActive_ = false;
+    }
+    return;
+  }
+
+  if (!needsFallback) return;
+  // 0 means "never attempted this boot" -- fire the first attempt right
+  // away rather than waiting out a full interval first.
+  if (lastRdsFallbackAttemptMs_ != 0 &&
+      millis() - lastRdsFallbackAttemptMs_ < RadioConfig::RdsFallbackIntervalMs) {
+    return;
+  }
+
+  lastRdsFallbackAttemptMs_ = millis();
+  rdsFallbackStartMs_ = millis();
+  rdsFallbackActive_ = true;
+  // Already muted, so re-asserting the frequency -- which restarts the
+  // chip's RDS group-sync acquisition -- produces no audible change.
+  si4735_.setFrequency(si4735_.getFrequency());
+}
+
+bool RadioTuner::consumeRdsTimeSync() {
+  bool ready = rdsTimeReady_;
+  rdsTimeReady_ = false;
+  return ready;
 }
 
 void RadioTuner::save() {

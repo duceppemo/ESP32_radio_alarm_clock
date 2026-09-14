@@ -4,6 +4,7 @@
 #include "AlarmSound.h"
 #include "Preferences.h"
 #include "RadioTuner.h"
+#include "RegionStore.h"
 #include "SI4735.h"
 #include "WakeController.h"
 
@@ -28,7 +29,9 @@ void ring(AlarmClock &clock, const Alarm &alarm) {
 void test_radio_wake_ramps_from_start_volume_to_target() {
   AlarmClock clock;
   clock.begin();
-  RadioTuner radio;
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
   radio.begin();
   AlarmSound sound;
   sound.begin();
@@ -61,7 +64,9 @@ void test_radio_wake_ramps_from_start_volume_to_target() {
 void test_radio_wake_falls_back_to_tone_on_dead_air() {
   AlarmClock clock;
   clock.begin();
-  RadioTuner radio;
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
   radio.begin();
   AlarmSound sound;
   sound.begin();
@@ -91,7 +96,9 @@ void test_radio_wake_falls_back_to_tone_on_dead_air() {
 void test_radio_wake_does_not_fall_back_with_good_signal() {
   AlarmClock clock;
   clock.begin();
-  RadioTuner radio;
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
   radio.begin();
   AlarmSound sound;
   sound.begin();
@@ -119,7 +126,9 @@ void test_radio_wake_does_not_fall_back_with_good_signal() {
 void test_beep_wake_mutes_radio_and_starts_tone_immediately() {
   AlarmClock clock;
   clock.begin();
-  RadioTuner radio;
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
   radio.begin();
   AlarmSound sound;
   sound.begin();
@@ -144,7 +153,9 @@ void test_beep_wake_mutes_radio_and_starts_tone_immediately() {
 void test_chime_wake_selects_the_chime_tone() {
   AlarmClock clock;
   clock.begin();
-  RadioTuner radio;
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
   radio.begin();
   AlarmSound sound;
   sound.begin();
@@ -167,7 +178,9 @@ void test_chime_wake_selects_the_chime_tone() {
 void test_dismissing_a_radio_wake_restores_volume_and_unmutes() {
   AlarmClock clock;
   clock.begin();
-  RadioTuner radio;
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
   radio.begin();
   AlarmSound sound;
   sound.begin();
@@ -195,7 +208,9 @@ void test_dismissing_a_radio_wake_restores_volume_and_unmutes() {
 void test_dismissing_a_tone_wake_stops_the_tone_but_leaves_radio_muted() {
   AlarmClock clock;
   clock.begin();
-  RadioTuner radio;
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
   radio.begin();
   AlarmSound sound;
   sound.begin();
@@ -229,7 +244,9 @@ void test_dismissing_a_tone_wake_stops_immediately_via_tick_fast() {
   // immediately, without waiting for the next tickSlow().
   AlarmClock clock;
   clock.begin();
-  RadioTuner radio;
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
   radio.begin();
   AlarmSound sound;
   sound.begin();
@@ -256,7 +273,9 @@ void test_snoozing_ends_wake_and_re_ring_restarts_the_ramp() {
   AlarmClock clock;
   clock.begin();
   clock.setSnoozeMinutes(9);
-  RadioTuner radio;
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
   radio.begin();
   AlarmSound sound;
   sound.begin();

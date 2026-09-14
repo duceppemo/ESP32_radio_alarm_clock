@@ -39,6 +39,8 @@ Off-the-shelf radio alarm clocks are either dumb (no scheduling beyond one or tw
 - **OTA firmware updates** — reflash over WiFi from the dashboard once it's built and sealed up.
 - **Real battery monitoring** — an onboard fuel-gauge chip (MAX17048), not a voltage-divider guess.
 - **NTP time sync with a selectable timezone** — corrects the RTC automatically once on WiFi, so it doesn't slowly drift; pick your timezone (DST rule included) from the on-device menu or the dashboard, nothing hardcoded.
+- **RDS Clock Time fallback sync** — if WiFi/NTP isn't available, the tuner passively picks up a broadcast station's RDS time signal as a backup (only ever retuning silently while already muted and idle, never interrupting what you're listening to).
+- **Region-aware FM tuning** — pick Americas, Europe/Rest of World, or Japan from the dashboard; sets the correct de-emphasis and band for your part of the world.
 - **Auto-dimming** — the ambient light sensor (VEML7700) fades the TFT backlight and 7-segment display down in a dark room and back up in daylight, never fully off.
 - **On-device menu** — full control from the built-in color TFT and three buttons, no phone required.
 - **One button, two jobs** — the snooze button snoozes a ringing alarm; press it while just listening to the radio and it instead starts (or cancels) a sleep timer, shown with a live countdown on the TFT.

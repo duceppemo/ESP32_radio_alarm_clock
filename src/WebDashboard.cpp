@@ -52,8 +52,13 @@ WakeSource wakeSourceFromName(const String &name) {
 }  // namespace
 
 WebDashboard::WebDashboard(AlarmClock &alarms, RadioTuner &radio, RTC_DS3231 *rtc,
-                           BatteryMonitor *battery, TimezoneStore &timezone)
-    : alarms_(alarms), radio_(radio), rtc_(rtc), battery_(battery), timezone_(timezone) {}
+                           BatteryMonitor *battery, TimezoneStore &timezone, RegionStore &region)
+    : alarms_(alarms),
+      radio_(radio),
+      rtc_(rtc),
+      battery_(battery),
+      timezone_(timezone),
+      region_(region) {}
 
 void WebDashboard::begin() {
   loadOrCreateAdminCredentials();
@@ -143,6 +148,7 @@ void WebDashboard::syncTimeFromNtp() {
   if (getLocalTime(&timeinfo, 5000)) {
     rtc_->adjust(DateTime(timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday,
                           timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec));
+    ntpSyncSucceededOnce_ = true;
     Serial.println("RTC synced from NTP");
   }
 }
@@ -303,6 +309,9 @@ void WebDashboard::registerRoutes() {
           } else {
             radio_.setSleepTimer((uint16_t)value);
           }
+        } else if (action == "setRegion") {
+          region_.setIndex((uint8_t)value);
+          radio_.applyRegion();  // RegionStore itself doesn't touch hardware -- see RadioTuner.h
         } else {
           request->send(400, "application/json", "{\"ok\":false,\"error\":\"unknown action\"}");
           return;
@@ -393,6 +402,7 @@ String WebDashboard::buildStatusJson() {
   radio["volume"] = radio_.volume();
   radio["muted"] = radio_.muted();
   radio["sleepTimerMinutes"] = radio_.sleepTimerRemainingMinutes();
+  radio["regionIndex"] = region_.index();
   JsonArray presets = radio["presets"].to<JsonArray>();
   for (uint8_t i = 0; i < radio_.presetCount(); i++) presets.add(radio_.preset(i));
 
@@ -443,6 +453,12 @@ String WebDashboard::buildRadioJson() {
   doc["muted"] = radio_.muted();
   doc["rssi"] = radio_.rssi();
   doc["sleepTimerMinutes"] = radio_.sleepTimerRemainingMinutes();
+  doc["regionIndex"] = region_.index();
+  doc["regionLabel"] = region_.current().label;
+  JsonArray regionOptions = doc["regionOptions"].to<JsonArray>();
+  for (uint8_t i = 0; i < RegionStore::count(); i++) {
+    regionOptions.add(RegionStore::entry(i).label);
+  }
   JsonArray presets = doc["presets"].to<JsonArray>();
   for (uint8_t i = 0; i < radio_.presetCount(); i++) presets.add(radio_.preset(i));
   String out;

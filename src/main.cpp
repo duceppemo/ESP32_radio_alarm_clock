@@ -15,6 +15,7 @@
 #include "DisplayDimmer.h"
 #include "MenuSystem.h"
 #include "RadioTuner.h"
+#include "RegionStore.h"
 #include "SnoozeController.h"
 #include "StateLock.h"
 #include "TimeFormatStore.h"
@@ -32,14 +33,15 @@ Adafruit_7segment sevenSegment = Adafruit_7segment();
 BatteryMonitor battery;
 TimezoneStore timezoneStore;
 TimeFormatStore timeFormat;
+RegionStore regionStore;
 
 AlarmClock alarmClock;
-RadioTuner radioTuner;
+RadioTuner radioTuner(regionStore);
 AlarmSound alarmSound;
 WakeController wakeController(alarmClock, radioTuner, alarmSound);
 SnoozeController snoozeController(alarmClock, radioTuner);
 MenuSystem menu(tft, alarmClock, radioTuner, &battery, &rtc, timezoneStore, timeFormat);
-WebDashboard dashboard(alarmClock, radioTuner, &rtc, &battery, timezoneStore);
+WebDashboard dashboard(alarmClock, radioTuner, &rtc, &battery, timezoneStore, regionStore);
 
 DebouncedButton volumeUpButton(Pins::VolumeUp);
 DebouncedButton volumeDownButton(Pins::VolumeDown);
@@ -191,6 +193,7 @@ void setup() {
   reportStatus("Buzzer", alarmSound.begin());
   timezoneStore.begin();
   timeFormat.begin();
+  regionStore.begin();
 
   pinMode(Pins::VolumeUp, INPUT_PULLUP);
   pinMode(Pins::VolumeDown, INPUT_PULLUP);
@@ -241,6 +244,19 @@ void loop() {
   lastTickMs = nowMs;
 
   radioTuner.update();  // expires the sleep timer
+
+  // RDS Clock Time fallback: only worth attempting (and only actually
+  // applied) while there's no reliable NTP time yet -- see
+  // RadioTuner::updateRdsSync()/WebDashboard::hasSyncedFromNtpSuccessfully()
+  // for the full design (passive harvesting is free and always runs;
+  // needsFallback only gates the muted background retune).
+  bool needsRdsFallback = !dashboard.isOnline() || !dashboard.hasSyncedFromNtpSuccessfully();
+  radioTuner.updateRdsSync(needsRdsFallback);
+  if (rtcOk && needsRdsFallback && radioTuner.consumeRdsTimeSync()) {
+    rtc.adjust(radioTuner.rdsTime());
+    cachedNow = radioTuner.rdsTime();
+    Serial.println("RTC synced from RDS CT (fallback)");
+  }
 
   if (rtcOk) {
     cachedNow = rtc.now();

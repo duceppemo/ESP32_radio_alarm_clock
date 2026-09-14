@@ -32,16 +32,67 @@ class SI4735 {
     (void)defaultFunction;
   }
   void setFM(uint16_t fromFreq, uint16_t toFreq, uint16_t initialFreq, uint16_t step) {
-    (void)fromFreq;
-    (void)toFreq;
-    (void)step;
+    lastFmBandStart() = fromFreq;
+    lastFmBandEnd() = toFreq;
+    lastFmStep() = step;
     frequency = initialFreq;
+    driverCallCount()++;
   }
   void setFrequency(uint16_t freq) {
     frequency = freq;
     driverCallCount()++;
   }
   uint16_t getFrequency() { return frequency; }
+
+  // Process-wide, same rationale as simulatedRssi()/driverCallCount() --
+  // only one RadioTuner (and its one SI4735) is ever alive in a test at a
+  // time, and this is what applyRegion()-driven tests check to confirm a
+  // region's values actually reached the driver, not just that
+  // RadioTuner's own state changed.
+  void setFMDeEmphasis(uint8_t parameter) {
+    lastFmDeEmphasis() = parameter;
+    driverCallCount()++;
+  }
+  static uint8_t lastAppliedFmDeEmphasis() { return lastFmDeEmphasis(); }
+  static uint16_t lastAppliedFmBandStart() { return lastFmBandStart(); }
+  static uint16_t lastAppliedFmBandEnd() { return lastFmBandEnd(); }
+
+  void setRdsConfig(uint8_t rdsen, uint8_t bletha, uint8_t blethb, uint8_t blethc, uint8_t blethd) {
+    (void)bletha;
+    (void)blethb;
+    (void)blethc;
+    (void)blethd;
+    rdsEnabled = rdsen != 0;
+  }
+  void setFifoCount(uint8_t count) { (void)count; }
+
+  // rdsBeginQuery()+getRdsDateTime() mirror the real library's two-step
+  // query: the first "receives" whatever CT frame a test has queued (see
+  // setSimulatedRdsDateTime()), the second decodes it. A simulated frame
+  // persists until explicitly cleared, same as a real station that keeps
+  // repeating its CT group -- tests control exactly when it "arrives" and
+  // stops.
+  void rdsBeginQuery() { rdsQueryCalls++; }
+  bool getRdsDateTime(uint16_t *year, uint16_t *month, uint16_t *day, uint16_t *hour, uint16_t *minute) {
+    if (!simulatedRdsPresent()) return false;
+    *year = simulatedRdsYear();
+    *month = simulatedRdsMonth();
+    *day = simulatedRdsDay();
+    *hour = simulatedRdsHour();
+    *minute = simulatedRdsMinute();
+    return true;
+  }
+
+  static void setSimulatedRdsDateTime(uint16_t year, uint16_t month, uint16_t day, uint16_t hour,
+                                       uint16_t minute) {
+    simulatedRdsPresent() = true;
+    simulatedRdsYear() = year;
+    simulatedRdsMonth() = month;
+    simulatedRdsDay() = day;
+    simulatedRdsHour() = hour;
+    simulatedRdsMinute() = minute;
+  }
+  static void clearSimulatedRdsDateTime() { simulatedRdsPresent() = false; }
 
   void setVolume(uint8_t v) {
     volume = v;
@@ -82,6 +133,8 @@ class SI4735 {
   bool muted = false;
   int seekUpCalls = 0;
   int seekDownCalls = 0;
+  bool rdsEnabled = false;
+  int rdsQueryCalls = 0;
 
  private:
   static uint8_t &simulatedRssi() {
@@ -90,6 +143,46 @@ class SI4735 {
   }
   static bool &simulatedPresent() {
     static bool v = true;
+    return v;
+  }
+  static uint8_t &lastFmDeEmphasis() {
+    static uint8_t v = 0;
+    return v;
+  }
+  static uint16_t &lastFmBandStart() {
+    static uint16_t v = 0;
+    return v;
+  }
+  static uint16_t &lastFmBandEnd() {
+    static uint16_t v = 0;
+    return v;
+  }
+  static uint16_t &lastFmStep() {
+    static uint16_t v = 0;
+    return v;
+  }
+  static bool &simulatedRdsPresent() {
+    static bool v = false;
+    return v;
+  }
+  static uint16_t &simulatedRdsYear() {
+    static uint16_t v = 0;
+    return v;
+  }
+  static uint16_t &simulatedRdsMonth() {
+    static uint16_t v = 0;
+    return v;
+  }
+  static uint16_t &simulatedRdsDay() {
+    static uint16_t v = 0;
+    return v;
+  }
+  static uint16_t &simulatedRdsHour() {
+    static uint16_t v = 0;
+    return v;
+  }
+  static uint16_t &simulatedRdsMinute() {
+    static uint16_t v = 0;
     return v;
   }
 };

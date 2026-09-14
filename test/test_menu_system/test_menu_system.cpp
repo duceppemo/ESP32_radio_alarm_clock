@@ -5,6 +5,7 @@
 #include "MenuSystem.h"
 #include "Preferences.h"
 #include "RadioTuner.h"
+#include "RegionStore.h"
 #include "SI4735.h"
 #include "TimeFormatStore.h"
 #include "TimezoneStore.h"
@@ -73,7 +74,9 @@ void hold(uint8_t pin, MenuSystem &menu) {
 void test_toggling_an_alarm_enabled_through_the_full_edit_flow() {
   AlarmClock alarms;
   alarms.begin();
-  RadioTuner radio;
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
   radio.begin();
   Adafruit_ST7789 tft(0, 0, 0);
   TimezoneStore timezone;
@@ -99,7 +102,9 @@ void test_toggling_an_alarm_enabled_through_the_full_edit_flow() {
 void test_editing_hour_and_minute_then_saving() {
   AlarmClock alarms;
   alarms.begin();
-  RadioTuner radio;
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
   radio.begin();
   Adafruit_ST7789 tft(0, 0, 0);
   TimezoneStore timezone;
@@ -129,7 +134,9 @@ void test_editing_hour_and_minute_then_saving() {
 void test_cancelling_an_edit_with_long_press_discards_changes() {
   AlarmClock alarms;
   alarms.begin();
-  RadioTuner radio;
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
   radio.begin();
   Adafruit_ST7789 tft(0, 0, 0);
   TimezoneStore timezone;
@@ -150,7 +157,9 @@ void test_cancelling_an_edit_with_long_press_discards_changes() {
 void test_holding_through_a_long_press_screen_change_does_not_cascade_further() {
   AlarmClock alarms;
   alarms.begin();
-  RadioTuner radio;
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
   radio.begin();
   Adafruit_ST7789 tft(0, 0, 0);
   TimezoneStore timezone;
@@ -195,7 +204,9 @@ void test_holding_through_a_long_press_screen_change_does_not_cascade_further() 
 void test_radio_screen_tune_up_and_mute() {
   AlarmClock alarms;
   alarms.begin();
-  RadioTuner radio;
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
   radio.begin();
   uint16_t startFreq = radio.frequency10kHz();
   Adafruit_ST7789 tft(0, 0, 0);
@@ -220,7 +231,9 @@ void test_radio_screen_tune_up_and_mute() {
 void test_radio_screen_does_nothing_when_no_radio_is_present() {
   AlarmClock alarms;
   alarms.begin();
-  RadioTuner radio;
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
   SI4735::setSimulatedPresent(false);
   TEST_ASSERT_FALSE(radio.begin());
   uint16_t startFreq = radio.frequency10kHz();
@@ -246,7 +259,9 @@ void test_radio_screen_does_nothing_when_no_radio_is_present() {
 void test_ringing_alarm_short_press_snoozes() {
   AlarmClock alarms;
   alarms.begin();
-  RadioTuner radio;
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
   radio.begin();
   Adafruit_ST7789 tft(0, 0, 0);
   TimezoneStore timezone;
@@ -273,7 +288,9 @@ void test_ringing_alarm_short_press_snoozes() {
 void test_ringing_alarm_long_press_dismisses() {
   AlarmClock alarms;
   alarms.begin();
-  RadioTuner radio;
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
   radio.begin();
   Adafruit_ST7789 tft(0, 0, 0);
   TimezoneStore timezone;
@@ -299,7 +316,9 @@ void test_ringing_alarm_long_press_dismisses() {
 void test_set_time_saves_the_new_hour_and_minute() {
   AlarmClock alarms;
   alarms.begin();
-  RadioTuner radio;
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
   radio.begin();
   RTC_DS3231 rtc;
   rtc.adjust(kNow);
@@ -341,7 +360,9 @@ void test_set_time_saves_the_new_hour_and_minute() {
 void test_set_time_format_field_toggles_between_24h_and_12h() {
   AlarmClock alarms;
   alarms.begin();
-  RadioTuner radio;
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
   radio.begin();
   RTC_DS3231 rtc;
   rtc.adjust(kNow);
@@ -379,7 +400,9 @@ void test_set_time_format_field_toggles_between_24h_and_12h() {
 void test_set_time_sync_now_requests_sync_instead_of_saving() {
   AlarmClock alarms;
   alarms.begin();
-  RadioTuner radio;
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
   radio.begin();
   RTC_DS3231 rtc;
   rtc.adjust(kNow);
@@ -413,7 +436,9 @@ void test_set_time_sync_now_requests_sync_instead_of_saving() {
 void test_set_time_sync_now_does_nothing_while_offline() {
   AlarmClock alarms;
   alarms.begin();
-  RadioTuner radio;
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
   radio.begin();
   RTC_DS3231 rtc;
   rtc.adjust(kNow);
@@ -449,7 +474,9 @@ void test_set_time_sync_now_does_nothing_while_offline() {
 void test_set_time_cancelled_with_long_press_does_not_save() {
   AlarmClock alarms;
   alarms.begin();
-  RadioTuner radio;
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
   radio.begin();
   RTC_DS3231 rtc;
   rtc.adjust(kNow);
@@ -477,7 +504,9 @@ void test_set_time_cancelled_with_long_press_does_not_save() {
 void test_set_time_with_no_rtc_does_not_crash() {
   AlarmClock alarms;
   alarms.begin();
-  RadioTuner radio;
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
   radio.begin();
   Adafruit_ST7789 tft(0, 0, 0);
   TimezoneStore timezone;
@@ -505,7 +534,9 @@ void test_set_rtc_unavailable_skips_saving_even_with_a_non_null_rtc() {
   // is how setup() corrects that after the fact.
   AlarmClock alarms;
   alarms.begin();
-  RadioTuner radio;
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
   radio.begin();
   RTC_DS3231 rtc;
   rtc.adjust(kNow);
@@ -538,7 +569,9 @@ void test_set_rtc_unavailable_skips_saving_even_with_a_non_null_rtc() {
 void test_timezone_screen_cycles_selection() {
   AlarmClock alarms;
   alarms.begin();
-  RadioTuner radio;
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
   radio.begin();
   Adafruit_ST7789 tft(0, 0, 0);
   TimezoneStore timezone;
