@@ -69,6 +69,7 @@ inline void tone(uint8_t pin, unsigned int frequency) {
 }
 inline void noTone(uint8_t pin) { (void)pin; }
 inline void delay(uint32_t ms) { (void)ms; }
+inline void delayMicroseconds(uint32_t us) { (void)us; }
 
 // Per-pin simulated digital input state, settable from tests (buttons are
 // active-low with internal pull-ups, so HIGH = not pressed is the default).

@@ -8,6 +8,7 @@
 #include "Config.h"
 #include "RadioTuner.h"
 #include "RegionStore.h"
+#include "TimeFormatStore.h"
 #include "TimezoneStore.h"
 
 // Hosts the setup/status web dashboard described in the README's "Planned
@@ -31,7 +32,7 @@
 class WebDashboard {
  public:
   WebDashboard(AlarmClock &alarms, RadioTuner &radio, RTC_DS3231 *rtc, BatteryMonitor *battery,
-               TimezoneStore &timezone, RegionStore &region);
+               TimezoneStore &timezone, RegionStore &region, TimeFormatStore &timeFormat);
 
   void begin();
   // rtc is constructed and wired up before rtc->begin() is ever called
@@ -99,6 +100,7 @@ class WebDashboard {
   BatteryMonitor *battery_;
   TimezoneStore &timezone_;
   RegionStore &region_;
+  TimeFormatStore &timeFormat_;
 
   bool apMode_ = true;
   String staSsid_;

@@ -52,13 +52,15 @@ WakeSource wakeSourceFromName(const String &name) {
 }  // namespace
 
 WebDashboard::WebDashboard(AlarmClock &alarms, RadioTuner &radio, RTC_DS3231 *rtc,
-                           BatteryMonitor *battery, TimezoneStore &timezone, RegionStore &region)
+                           BatteryMonitor *battery, TimezoneStore &timezone, RegionStore &region,
+                           TimeFormatStore &timeFormat)
     : alarms_(alarms),
       radio_(radio),
       rtc_(rtc),
       battery_(battery),
       timezone_(timezone),
-      region_(region) {}
+      region_(region),
+      timeFormat_(timeFormat) {}
 
 void WebDashboard::begin() {
   loadOrCreateAdminCredentials();
@@ -282,6 +284,25 @@ void WebDashboard::registerRoutes() {
   alarmHandler->setMethod(HTTP_POST);
   server_.addHandler(alarmHandler);
 
+  // Not under /api/alarm/... (that's already the snooze-now action route
+  // above) or folded into /api/alarms (that's per-alarm, index-addressed) --
+  // this is the one global snooze-length setting, same shape as /api/timezone.
+  auto *snoozeMinutesHandler = new AsyncCallbackJsonWebHandler(
+      "/api/alarms/snooze-minutes", [this](AsyncWebServerRequest *request, JsonVariant &json) {
+        StateLock lock;
+        if (!requireAuth(request)) return;
+        int minutes = json["minutes"] | -1;
+        if (minutes < 0) {
+          request->send(400, "application/json", "{\"ok\":false,\"error\":\"minutes required\"}");
+          return;
+        }
+        // setSnoozeMinutes() itself clamps to AlarmConfig::Min/MaxSnoozeMinutes.
+        alarms_.setSnoozeMinutes((uint8_t)minutes);
+        request->send(200, "application/json", "{\"ok\":true}");
+      });
+  snoozeMinutesHandler->setMethod(HTTP_POST);
+  server_.addHandler(snoozeMinutesHandler);
+
   auto *radioHandler = new AsyncCallbackJsonWebHandler(
       "/api/radio", [this](AsyncWebServerRequest *request, JsonVariant &json) {
         StateLock lock;
@@ -354,6 +375,20 @@ void WebDashboard::registerRoutes() {
   timezoneHandler->setMethod(HTTP_POST);
   server_.addHandler(timezoneHandler);
 
+  auto *timeFormatHandler = new AsyncCallbackJsonWebHandler(
+      "/api/timeformat", [this](AsyncWebServerRequest *request, JsonVariant &json) {
+        StateLock lock;
+        if (!requireAuth(request)) return;
+        bool is24Hour = json["is24Hour"] | true;
+        // TimeFormatStore only exposes toggle() (matches MenuSystem's TFT
+        // control, a plain flip) -- no dedicated setter, so only flip it
+        // when the request actually changes the value.
+        if (timeFormat_.is24Hour() != is24Hour) timeFormat_.toggle();
+        request->send(200, "application/json", "{\"ok\":true}");
+      });
+  timeFormatHandler->setMethod(HTTP_POST);
+  server_.addHandler(timeFormatHandler);
+
   server_.onNotFound(
       [](AsyncWebServerRequest *request) { request->send(404, "text/plain", "Not found"); });
 }
@@ -396,11 +431,14 @@ String WebDashboard::buildStatusJson() {
 
   doc["timezoneIndex"] = timezone_.index();
   doc["timezoneLabel"] = timezone_.label();
+  doc["is24HourFormat"] = timeFormat_.is24Hour();
 
   JsonObject radio = doc["radio"].to<JsonObject>();
   radio["frequency10kHz"] = radio_.frequency10kHz();
   radio["volume"] = radio_.volume();
   radio["muted"] = radio_.muted();
+  radio["stationName"] = radio_.stationName();
+  radio["radioText"] = radio_.radioText();
   radio["sleepTimerMinutes"] = radio_.sleepTimerRemainingMinutes();
   radio["regionIndex"] = region_.index();
   JsonArray presets = radio["presets"].to<JsonArray>();
@@ -408,6 +446,7 @@ String WebDashboard::buildStatusJson() {
 
   JsonObject alarmsObj = doc["alarms"].to<JsonObject>();
   alarmsObj["ringingIndex"] = alarms_.ringingAlarmIndex();
+  alarmsObj["snoozeMinutes"] = alarms_.snoozeMinutes();
   JsonArray alarmsArr = alarmsObj["alarms"].to<JsonArray>();
   for (uint8_t i = 0; i < AlarmClock::count(); i++) {
     const Alarm &a = alarms_.alarm(i);
@@ -452,6 +491,8 @@ String WebDashboard::buildRadioJson() {
   doc["volume"] = radio_.volume();
   doc["muted"] = radio_.muted();
   doc["rssi"] = radio_.rssi();
+  doc["stationName"] = radio_.stationName();
+  doc["radioText"] = radio_.radioText();
   doc["sleepTimerMinutes"] = radio_.sleepTimerRemainingMinutes();
   doc["regionIndex"] = region_.index();
   doc["regionLabel"] = region_.current().label;

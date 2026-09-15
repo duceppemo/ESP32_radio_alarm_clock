@@ -52,12 +52,13 @@ void test_radio_wake_ramps_from_start_volume_to_target() {
   TEST_ASSERT_EQUAL(AlarmConfig::WakeRampStartVolume, radio.volume());
   TEST_ASSERT_FALSE(radio.muted());
 
-  native_fake_millis_value() = 1000 + 45000;  // halfway through the 90s ramp
-  wake.tickSlow(DateTime(2026, 8, 25, 7, 0, 45));
+  uint32_t rampMs = (uint32_t)AlarmConfig::WakeRampSeconds * 1000UL;
+  native_fake_millis_value() = 1000 + rampMs / 2;  // halfway through the ramp
+  wake.tickSlow(DateTime(2026, 8, 25, 7, 0, 0));
   TEST_ASSERT_EQUAL(4 + (30 - 4) / 2, radio.volume());
 
-  native_fake_millis_value() = 1000 + 90000;  // ramp complete
-  wake.tickSlow(DateTime(2026, 8, 25, 7, 1, 31));
+  native_fake_millis_value() = 1000 + rampMs;  // ramp complete
+  wake.tickSlow(DateTime(2026, 8, 25, 7, 0, 0));
   TEST_ASSERT_EQUAL(30, radio.volume());
 }
 
@@ -296,8 +297,8 @@ void test_snoozing_ends_wake_and_re_ring_restarts_the_ramp() {
   TEST_ASSERT_EQUAL(AlarmConfig::WakeRampStartVolume, radio.volume());
 
   clock.snooze(ringTime);
-  wake.tickSlow(ringTime);  // detects ring ended -> endWake(), restores volume
-  TEST_ASSERT_EQUAL(30, radio.volume());
+  wake.tickSlow(ringTime);  // detects ring ended -> endWake() mutes rather than blaring at full volume
+  TEST_ASSERT_TRUE(radio.muted());
 
   DateTime dueTime = ringTime + TimeSpan(0, 0, 9, 0);
   clock.update(dueTime);
@@ -305,6 +306,40 @@ void test_snoozing_ends_wake_and_re_ring_restarts_the_ramp() {
 
   wake.tickSlow(dueTime);  // new ring -> beginWake() again, ramp restarts
   TEST_ASSERT_EQUAL(AlarmConfig::WakeRampStartVolume, radio.volume());
+  TEST_ASSERT_FALSE(radio.muted());
+}
+
+void test_snooze_press_mutes_the_radio_immediately_via_tick_fast() {
+  // Regression: pressing snooze must silence the radio right away rather
+  // than waiting up to a second for the next tickSlow() -- same reasoning
+  // as the tone-wake equivalent above.
+  AlarmClock clock;
+  clock.begin();
+  clock.setSnoozeMinutes(9);
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
+  radio.begin();
+  AlarmSound sound;
+  sound.begin();
+  WakeController wake(clock, radio, sound);
+
+  Alarm a;
+  a.hour = 7;
+  a.minute = 0;
+  a.enabled = true;
+  a.daysMask = 0b1111111;
+  a.wakeSource = WakeSource::Radio;
+
+  ring(clock, a);
+  DateTime ringTime(2026, 8, 25, 7, 0, 0);
+  wake.tickSlow(ringTime);
+  TEST_ASSERT_FALSE(radio.muted());
+
+  clock.snooze(ringTime);
+  wake.tickFast();  // no tickSlow() call at all -- must still mute immediately
+
+  TEST_ASSERT_TRUE(radio.muted());
 }
 
 int main(int argc, char **argv) {
@@ -320,5 +355,6 @@ int main(int argc, char **argv) {
   RUN_TEST(test_dismissing_a_tone_wake_stops_the_tone_but_leaves_radio_muted);
   RUN_TEST(test_dismissing_a_tone_wake_stops_immediately_via_tick_fast);
   RUN_TEST(test_snoozing_ends_wake_and_re_ring_restarts_the_ramp);
+  RUN_TEST(test_snooze_press_mutes_the_radio_immediately_via_tick_fast);
   return UNITY_END();
 }

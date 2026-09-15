@@ -35,16 +35,16 @@ Off-the-shelf radio alarm clocks are either dumb (no scheduling beyond one or tw
 - **Real radio wake-up** — an actual FM/AM tuner (SI4730), not a streamed stub, with a gradual sunrise volume ramp instead of a jump-scare.
 - **Dead-air fallback** — if the tuned station has no signal when the alarm fires, it automatically switches to a gentle tone instead of static.
 - **Per-alarm wake source** — radio, a classic beep, or a two-note chime; three independent schedules, each with its own days-of-week mask.
-- **Web dashboard** — configure alarms, radio presets, volume, and WiFi from a phone; no app, no account, no cloud.
+- **Web dashboard** — configure alarms (12-hour or 24-hour, your pick, with an AM/PM picker), snooze duration, 6 reassignable radio presets, volume, and WiFi from a phone; no app, no account, no cloud.
 - **Login-protected once on your WiFi** — a random per-device password is generated on first boot and shown on the setup page; the dashboard and OTA updates require it (except during initial AP setup, where you're already physically close enough to the device that it doesn't add anything).
 - **OTA firmware updates** — reflash over WiFi from the dashboard once it's built and sealed up.
 - **Real battery monitoring** — an onboard fuel-gauge chip (MAX17048), not a voltage-divider guess.
 - **NTP time sync with a selectable timezone** — corrects the RTC automatically once on WiFi, so it doesn't slowly drift; pick your timezone (DST rule included) from the on-device menu or the dashboard, nothing hardcoded.
-- **RDS Clock Time fallback sync** *(currently disabled — see [`docs/firmware.md`](docs/firmware.md) known gaps)* — the design: if WiFi/NTP isn't available, the tuner passively picks up a broadcast station's RDS time signal as a backup (only ever retuning silently while already muted and idle, never interrupting what you're listening to).
+- **RDS support** — station name and RadioText on the Radio screen and dashboard when the tuned station broadcasts it, plus a Clock Time fallback sync as a backup for when WiFi/NTP isn't available *(currently disabled — see [`docs/firmware.md`](docs/firmware.md) known gaps)*. Both are safe, bounded I2C reads, built after a known hang in the underlying driver library's own RDS call froze the whole device once during testing.
 - **Region-aware FM tuning** — pick Americas, Europe/Rest of World, or Japan from the dashboard; sets the correct de-emphasis and band for your part of the world.
 - **Auto-dimming** — the ambient light sensor (VEML7700) fades the TFT backlight and 7-segment display down in a dark room and back up in daylight, never fully off.
-- **On-device menu** — full control from the built-in color TFT and three buttons, no phone required.
-- **One button, two jobs** — the snooze button snoozes a ringing alarm; press it while just listening to the radio and it instead starts (or cancels) a sleep timer, shown with a live countdown on the TFT.
+- **On-device menu** — full control from the built-in color TFT and three buttons, no phone required; a lock-screen-style Home shows the clock plus at-a-glance status icons for battery, WiFi, and whether an alarm is armed or currently snoozing, and the running firmware version is shown right on the boot screen.
+- **One button, two jobs** — the snooze button snoozes a ringing alarm for however long you've set (1-60 min from the dashboard, default 9); press it while just listening to the radio and it instead starts (or cancels) a sleep timer, shown with a live countdown on the TFT.
 
 ## Hardware
 
@@ -78,7 +78,7 @@ See [`docs/wiring-diagram.html`](docs/wiring-diagram.html) for wiring notes/assu
 
 A PlatformIO project targeting the ESP32-S3 via the [pioarduino](https://github.com/pioarduino/platform-espressif32) platform fork. Covers alarm scheduling (sunrise ramp + dead-air fallback), FM radio control, an on-device TFT menu, battery monitoring, NTP time sync, auto-dimming, OTA updates, and the WiFi setup/status web dashboard.
 
-It builds clean and its hardware-independent logic (alarm scheduling, radio wrapper, wake orchestration, on-device menu, region/timezone selection, the auto-dim brightness curve) has 110 passing unit tests that run on every push — see the CI badge above. See [`docs/firmware.md`](docs/firmware.md) for the module architecture, build/flash instructions, the dashboard's API, and current known gaps — and [Status & what's next](#status--whats-next) below for where real-hardware bring-up stands.
+It builds clean and its hardware-independent logic (alarm scheduling, radio wrapper, wake orchestration, on-device menu, region/timezone selection, the auto-dim brightness curve) has 119 passing unit tests that run on every push — see the CI badge above. See [`docs/firmware.md`](docs/firmware.md) for the module architecture, build/flash instructions, the dashboard's API, and current known gaps — and [Status & what's next](#status--whats-next) below for where real-hardware bring-up stands.
 
 ## Status & what's next
 
@@ -87,8 +87,9 @@ It builds clean and its hardware-independent logic (alarm scheduling, radio wrap
 **Still open:**
 
 - The buzzer (alarm tone / dead-air fallback sound) isn't wired or tested yet.
-- The dead-air RSSI threshold, buzzer tone pattern, and auto-dim lux thresholds are still best-guess values pending real-world tuning — see [`docs/firmware.md`](docs/firmware.md#known-gaps).
+- The dead-air RSSI threshold, buzzer tone pattern, and auto-dim lux thresholds are still best-guess values pending real-world tuning — see [`docs/firmware.md`](docs/firmware.md#known-gaps). (The radio-wake volume ramp *has* been tuned against real listening tests, and now runs 30s instead of the original 90s guess.)
 - RDS Clock Time fallback sync is implemented but disabled — the underlying library call it needs turned out to hang indefinitely under real (weak-signal) reception. Re-enabling it needs either a patched library or a rewritten status read; see the known gaps for detail.
+- RDS station name/RadioText is implemented with its own safe, bounded I2C read (so it can't hang the device even if the chip never syncs), but doesn't actually decode anything on the specific SI4730-D60 unit in this build — the chip's own RDS status response comes back with a persistent error, a known limitation of some SI4730-D60 units documented by the driver library's author, not a firmware bug. See the known gaps for detail.
 - No enclosure yet — see [Enclosure](#enclosure) below.
 
 ## Getting started

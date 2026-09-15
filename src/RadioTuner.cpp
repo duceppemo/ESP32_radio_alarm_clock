@@ -1,18 +1,26 @@
 #include "RadioTuner.h"
 
 #include <Preferences.h>
+#include <Wire.h>
 
 namespace {
 constexpr const char *kNamespace = "radio";
 constexpr const char *kVolumeKey = "volume";
 constexpr const char *kFreqKey = "freq";
+
+// FM_RDS_STATUS command byte (Si47XX PROGRAMMING GUIDE AN332) -- not
+// exposed by the PU2CLR SI4735 library's public API, so it's redefined
+// here rather than reaching into the library's own private header value.
+constexpr uint8_t kFmRdsStatusCommand = 0x24;
 }  // namespace
 
 bool RadioTuner::begin(uint8_t resetPin) {
   load();
 
-  available_ = si4735_.getDeviceI2CAddress(resetPin) != 0;
+  int16_t address = si4735_.getDeviceI2CAddress(resetPin);
+  available_ = address != 0;
   if (!available_) return false;
+  i2cAddress_ = (uint8_t)address;
 
   si4735_.setup(resetPin, FM_CURRENT_MODE);
   applyRegion();  // sets de-emphasis + band, tunes to the persisted frequency
@@ -291,6 +299,100 @@ bool RadioTuner::consumeRdsTimeSync() {
   bool ready = rdsTimeReady_;
   rdsTimeReady_ = false;
   return ready;
+}
+
+void RadioTuner::pollRdsText() {
+  if (!available_ || muted_) return;
+
+  uint16_t freq = frequency10kHz();
+  if (freq != lastRdsFrequency_) {
+    // Different station (however the frequency got here -- tune(), a
+    // step, a seek, or a preset all end up here) -- its name/RadioText no
+    // longer apply.
+    lastRdsFrequency_ = freq;
+    psName_[0] = '\0';
+    radioText_[0] = '\0';
+    radioTextAbFlagKnown_ = false;
+  }
+
+  uint8_t raw[13];
+  if (!readRdsGroupSafely(raw)) return;  // gave up within bounds -- try again next second
+  decodeRdsGroup(raw);
+}
+
+bool RadioTuner::readRdsGroupSafely(uint8_t raw[13]) {
+  Wire.beginTransmission(i2cAddress_);
+  Wire.write(kFmRdsStatusCommand);
+  Wire.write((uint8_t)0);  // INTACK=0, MTFIFO=0, STATUSONLY=0 -- a plain poll
+  Wire.endTransmission();
+
+  for (uint8_t attempt = 0; attempt < RadioConfig::RdsMaxErrRetries; attempt++) {
+    bool ctsReady = false;
+    for (uint8_t poll = 0; poll < RadioConfig::RdsMaxCtsPolls; poll++) {
+      delayMicroseconds(RadioConfig::RdsCtsPollDelayUs);
+      Wire.requestFrom(i2cAddress_, (uint8_t)1);
+      if (Wire.available() && (Wire.read() & 0x80)) {  // bit 7 = CTS
+        ctsReady = true;
+        break;
+      }
+    }
+    if (!ctsReady) return false;  // chip never asserted CTS -- give up, don't hang
+
+    Wire.requestFrom(i2cAddress_, (uint8_t)13);
+    for (uint8_t i = 0; i < 13; i++) raw[i] = Wire.available() ? Wire.read() : 0;
+    if (!(raw[0] & 0x40)) return true;  // bit 6 = ERR, clear -- good read
+  }
+  return false;  // stuck ERR after bounded retries -- give up cleanly, try again next poll
+}
+
+void RadioTuner::decodeRdsGroup(const uint8_t raw[13]) {
+  // Byte offsets match the FM_RDS_STATUS response (Si47XX PROGRAMMING
+  // GUIDE AN332): [0]=status/ERR/CTS, [1..2]=RDS status flags,
+  // [3]=FIFO used, [4..5]=Block A, [6..7]=Block B, [8..9]=Block C,
+  // [10..11]=Block D, [12]=block error counts. Decoded with plain
+  // bit-shifts rather than the library's bitfield unions -- simpler to
+  // verify against the spec and has no platform-dependent bit-order risk.
+  uint16_t blockB = ((uint16_t)raw[6] << 8) | raw[7];
+  uint8_t blockCHigh = raw[8], blockCLow = raw[9];
+  uint8_t blockDHigh = raw[10], blockDLow = raw[11];
+
+  uint8_t groupType = (blockB >> 12) & 0x0F;
+  bool isVersionB = (blockB >> 11) & 0x01;
+
+  if (groupType == 0) {
+    // Group 0A/0B: PS (station) name. Distribution is identical for both
+    // versions -- Block D always carries 2 characters of the 8-char name,
+    // for whichever of the 4 segments this group's address selects.
+    uint8_t segment = blockB & 0x03;
+    psName_[segment * 2] = (char)blockDHigh;
+    psName_[segment * 2 + 1] = (char)blockDLow;
+    psName_[8] = '\0';
+  } else if (groupType == 2) {
+    // Group 2A/2B: RadioText. A flip of the text A/B flag means a
+    // genuinely new message -- clear the buffer before this segment lands,
+    // same as the library's own PS-name handling clears on a change.
+    bool abFlag = (blockB >> 4) & 0x01;
+    if (!radioTextAbFlagKnown_ || abFlag != radioTextAbFlag_) {
+      radioText_[0] = '\0';
+      radioTextAbFlag_ = abFlag;
+      radioTextAbFlagKnown_ = true;
+    }
+    uint8_t segment = blockB & 0x0F;
+    if (!isVersionB) {
+      // 2A: 4 chars/segment (Block C + Block D), 16 segments, 64 chars.
+      radioText_[segment * 4] = (char)blockCHigh;
+      radioText_[segment * 4 + 1] = (char)blockCLow;
+      radioText_[segment * 4 + 2] = (char)blockDHigh;
+      radioText_[segment * 4 + 3] = (char)blockDLow;
+      radioText_[64] = '\0';
+    } else {
+      // 2B: 2 chars/segment (Block D only), 16 segments, 32 chars.
+      radioText_[segment * 2] = (char)blockDHigh;
+      radioText_[segment * 2 + 1] = (char)blockDLow;
+      radioText_[32] = '\0';
+    }
+  }
+  // Any other group type carries neither PS name nor RadioText -- ignored.
 }
 
 void RadioTuner::save() {

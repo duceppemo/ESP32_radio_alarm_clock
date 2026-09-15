@@ -89,6 +89,15 @@ class MenuSystem {
   // there's no lightning-bolt state, just outline/fill color).
   void drawWifiStatusIcon(int16_t x, int16_t y, bool staConnected);
   void drawBatteryStatusIcon(int16_t x, int16_t y);
+  // Small bell glyph, drawn only while at least one alarm is enabled --
+  // absent (not dimmed) otherwise, same "nothing to report" spirit as
+  // Battery's unavailable case, but without an empty-outline state since
+  // there's no useful "off" shape for a bell the way there is for a
+  // battery. Answers the "is anything armed?" question renderHome()'s
+  // lock-screen layout otherwise dropped (see its own comment). Turns
+  // orange instead of white while snoozing -- see the .cpp for why that's
+  // layered on this glyph rather than a separate icon.
+  void drawAlarmStatusIcon(int16_t x, int16_t y, bool anyEnabled, bool snoozing);
 
   // One rounded-square app-icon-style badge for Home's bottom nav row:
   // colored background, a simple glyph, brightened plus a border when

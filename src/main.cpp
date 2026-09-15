@@ -41,7 +41,7 @@ AlarmSound alarmSound;
 WakeController wakeController(alarmClock, radioTuner, alarmSound);
 SnoozeController snoozeController(alarmClock, radioTuner);
 MenuSystem menu(tft, alarmClock, radioTuner, &battery, &rtc, timezoneStore, timeFormat);
-WebDashboard dashboard(alarmClock, radioTuner, &rtc, &battery, timezoneStore, regionStore);
+WebDashboard dashboard(alarmClock, radioTuner, &rtc, &battery, timezoneStore, regionStore, timeFormat);
 
 DebouncedButton volumeUpButton(Pins::VolumeUp);
 DebouncedButton volumeDownButton(Pins::VolumeDown);
@@ -155,7 +155,8 @@ void setup() {
   tft.setTextSize(1);
   tft.setTextColor(kDimGray);
   tft.setCursor(0, kSubtitleY);
-  tft.print("Hardware bring-up");
+  tft.print("Hardware bring-up  v");
+  tft.print(FirmwareVersion);
 
   Wire.begin();
 
@@ -244,6 +245,7 @@ void loop() {
   lastTickMs = nowMs;
 
   radioTuner.update();  // expires the sleep timer
+  radioTuner.pollRdsText();  // station name / RadioText -- see RadioTuner.h
 
   // RDS Clock Time fallback: currently disabled -- see
   // RadioTuner::updateRdsSync()'s definition for why. This call and the
@@ -264,16 +266,14 @@ void loop() {
     Serial.printf("%02d:%02d:%02d\n", cachedNow.hour(), cachedNow.minute(), cachedNow.second());
 
     if (sevenSegmentOk && alarmClock.state() == AlarmState::Idle) {
+      bool pm = cachedNow.hour() >= 12;
       if (timeFormat.is24Hour()) {
         sevenSegment.print(cachedNow.hour() * 100 + cachedNow.minute(), DEC);
       } else {
-        // No letters on a 4-digit 7-segment, so AM/PM rides on the last
-        // digit's decimal point instead (lit = PM) -- a common convention
-        // on this style of display. Leading hour digit is blanked rather
-        // than shown as 0 (e.g. "9:05", not "09:05").
+        // Leading hour digit is blanked rather than shown as 0 (e.g. "9:05",
+        // not "09:05").
         uint8_t displayHour = cachedNow.hour() % 12;
         if (displayHour == 0) displayHour = 12;
-        bool pm = cachedNow.hour() >= 12;
         if (displayHour >= 10) {
           sevenSegment.writeDigitNum(0, displayHour / 10);
         } else {
@@ -281,9 +281,29 @@ void loop() {
         }
         sevenSegment.writeDigitNum(1, displayHour % 10);
         sevenSegment.writeDigitNum(3, cachedNow.minute() / 10);
-        sevenSegment.writeDigitNum(4, cachedNow.minute() % 10, pm);
+        sevenSegment.writeDigitNum(4, cachedNow.minute() % 10);
       }
-      sevenSegment.drawColon(cachedNow.second() % 2 == 0);
+
+      bool anyAlarmEnabled = false;
+      for (uint8_t i = 0; i < AlarmClock::count(); i++) {
+        if (alarmClock.alarm(i).enabled) {
+          anyAlarmEnabled = true;
+          break;
+        }
+      }
+      // Digit position 2 (the colon slot) also carries this board's 2
+      // undocumented "left dot" LEDs -- bit assignment identified live with
+      // a throwaway boot-time diagnostic (cycled each candidate bit and
+      // watched which physical dot lit up), not from any datasheet:
+      // 0x04 = top-left, 0x08 = bottom-left. No letters on a 4-digit
+      // 7-segment, so these are the only free real estate for PM (which
+      // only means anything in 12-hour mode) and an alarm-armed indicator.
+      uint8_t dotBits = 0;
+      if (cachedNow.second() % 2 == 0) dotBits |= 0x02;  // colon, blinking
+      if (!timeFormat.is24Hour() && pm) dotBits |= 0x04;  // PM -- top-left dot
+      if (anyAlarmEnabled) dotBits |= 0x08;                // alarm armed -- bottom-left dot
+      sevenSegment.writeDigitRaw(2, dotBits);
+
       sevenSegment.writeDisplay();
     }
   }

@@ -41,7 +41,7 @@ void WakeController::detectRingTransition() {
   if (nowRinging && !wasRinging) {
     beginWake();
   } else if (!nowRinging && wasRinging) {
-    endWake();
+    endWake(state);
   }
   lastState_ = state;
 }
@@ -66,11 +66,18 @@ void WakeController::beginWake() {
   }
 }
 
-void WakeController::endWake() {
+void WakeController::endWake(AlarmState newState) {
   wakeActive_ = false;
   sound_.stop();
   if (lastWakeSource_ == WakeSource::Radio) {
-    radio_.setVolumeTransient(rampTargetVolume_);
-    radio_.setMuted(false);
+    if (newState == AlarmState::Snoozed) {
+      // Go quiet rather than restoring volume -- the user is going back to
+      // sleep, not settling in to listen. beginWake() unmutes and restarts
+      // the ramp on its own once the snooze elapses and it re-rings.
+      radio_.setMuted(true);
+    } else {
+      radio_.setVolumeTransient(rampTargetVolume_);
+      radio_.setMuted(false);
+    }
   }
 }

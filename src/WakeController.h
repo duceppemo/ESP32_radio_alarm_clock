@@ -32,7 +32,14 @@ class WakeController {
  private:
   void detectRingTransition();
   void beginWake();
-  void endWake();
+  // newState is where AlarmClock landed after leaving Ringing -- Snoozed or
+  // Idle -- so a radio wake can be handled differently for each: snoozing
+  // should go quiet (the user is going back to sleep), while a real dismiss
+  // restores the radio to its normal volume so it keeps playing as ambient
+  // listening now that the user is up. Both currently reach here the same
+  // way (detectRingTransition() only tracks Ringing vs not), so this needs
+  // the actual landing state to tell them apart.
+  void endWake(AlarmState newState);
 
   AlarmClock &alarms_;
   RadioTuner &radio_;

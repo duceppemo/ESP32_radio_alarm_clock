@@ -118,6 +118,28 @@ class RadioTuner {
   bool consumeRdsTimeSync();
   DateTime rdsTime() const { return rdsTime_; }
 
+  // Station name (PS, up to 8 chars) and RadioText (up to 64 chars),
+  // decoded from RDS groups 0/2 -- entirely independent of the disabled
+  // Clock Time sync above (updateRdsSync()/pollRdsForTime()); this never
+  // touches rdsBeginQuery()/getRdsDateTime() or si4735_'s own RDS methods
+  // at all. Empty ("") until something's actually been decoded. Call
+  // pollRdsText() once a second from main.cpp's slow tick; it no-ops
+  // unless the radio is available and unmuted (passive harvesting only,
+  // same spirit as the disabled fallback's "free while already
+  // listening" half -- never retunes or interrupts anything).
+  void pollRdsText();
+  const char *stationName() const { return psName_; }
+  const char *radioText() const { return radioText_; }
+
+  // Pure decode: given a 13-byte FM_RDS_STATUS response, updates
+  // psName_/radioText_. No Wire/SI4735 access at all -- public (rather
+  // than an implementation detail of pollRdsText()) specifically so tests
+  // can drive it directly with hand-built raw[13] arrays, without needing
+  // a test-controllable Wire fake for logic that never touches Wire in
+  // the first place. Decodes Block B with plain bit-shifts, not the
+  // library's platform-dependent bitfield unions.
+  void decodeRdsGroup(const uint8_t raw[13]);
+
  private:
   void applyVolume(uint8_t volume);
   void save();
@@ -125,6 +147,14 @@ class RadioTuner {
   // Polls the RDS FIFO once; sets rdsTimeReady_ (and cancels an
   // in-progress fallback attempt, if any) on a plausible CT frame.
   void pollRdsForTime();
+  // Issues the FM_RDS_STATUS command directly over Wire (using
+  // i2cAddress_, captured at begin()) and reads the 13-byte response, with
+  // a BOUNDED wait for CTS and a BOUNDED number of retries on an ERR
+  // response -- unlike the PU2CLR SI4735 library's own getRdsStatus(),
+  // which does both unbounded and is exactly what hung the whole device
+  // once already (see updateRdsSync()'s comment). Returns false (raw left
+  // untouched) if it gives up within those bounds; never blocks forever.
+  bool readRdsGroupSafely(uint8_t raw[13]);
   // Called once seekUp()/seekDown() finds a candidate clearing both
   // thresholds -- a real station's response curve is wider than one
   // FmStep, so the first candidate to clear the bar is often its leading
@@ -148,4 +178,19 @@ class RadioTuner {
   uint32_t lastRdsFallbackAttemptMs_ = 0;  // 0 = never attempted yet this boot
   bool rdsTimeReady_ = false;
   DateTime rdsTime_;
+
+  // Captured once in begin() (getDeviceI2CAddress() already found this) so
+  // readRdsGroupSafely() can talk to the chip directly without needing
+  // si4735_ to expose its own private address.
+  uint8_t i2cAddress_ = 0;
+  char psName_[9] = {};       // 8-char PS name + NUL
+  char radioText_[65] = {};   // up to 64-char RadioText + NUL
+  bool radioTextAbFlag_ = false;
+  bool radioTextAbFlagKnown_ = false;
+  // Frequency last seen by pollRdsText() -- a change means a different
+  // station, so the previous station's name/RadioText no longer apply.
+  // Checked here (not at every tune()/seekUp()/etc. call site) since some
+  // of those set the frequency directly on si4735_ rather than through a
+  // single shared path.
+  uint16_t lastRdsFrequency_ = 0;
 };

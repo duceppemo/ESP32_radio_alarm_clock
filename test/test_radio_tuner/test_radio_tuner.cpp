@@ -607,6 +607,172 @@ void test_disabled_rds_sync_ignores_a_simulated_ct_frame_even_while_idle() {
   TEST_ASSERT_FALSE(radio.consumeRdsTimeSync());
 }
 
+// --- RDS station name / RadioText (decodeRdsGroup() is pure logic -- no
+// Wire/SI4735 access -- so these drive it directly with hand-built raw[13]
+// arrays, matching the byte layout readRdsGroupSafely() fills in:
+// raw[6..7]=Block B, raw[8..9]=Block C, raw[10..11]=Block D. ---
+
+void test_station_name_and_radio_text_are_empty_before_anything_decoded() {
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
+  radio.begin();
+
+  TEST_ASSERT_EQUAL_STRING("", radio.stationName());
+  TEST_ASSERT_EQUAL_STRING("", radio.radioText());
+}
+
+void test_decode_rds_group_assembles_ps_name_across_all_segments() {
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
+  radio.begin();
+
+  // "RADIOFM1" split into 4 pairs across group-0 (PS name) segments 0-3.
+  struct {
+    uint8_t segment;
+    char a, b;
+  } parts[] = {{0, 'R', 'A'}, {1, 'D', 'I'}, {2, 'O', 'F'}, {3, 'M', '1'}};
+  for (auto &p : parts) {
+    uint8_t raw[13] = {};
+    uint16_t blockB = p.segment & 0x03;  // groupType=0, versionCode=0 (0A)
+    raw[6] = (uint8_t)(blockB >> 8);
+    raw[7] = (uint8_t)(blockB & 0xFF);
+    raw[10] = (uint8_t)p.a;
+    raw[11] = (uint8_t)p.b;
+    radio.decodeRdsGroup(raw);
+  }
+
+  TEST_ASSERT_EQUAL_STRING("RADIOFM1", radio.stationName());
+}
+
+void test_decode_rds_group_assembles_radiotext_2a_via_block_c_and_d() {
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
+  radio.begin();
+
+  // Version A (4 chars/segment from Block C + Block D): "TEST" then "MSG1".
+  uint8_t raw0[13] = {};
+  uint16_t blockB0 = (2u << 12) | (0u << 11) | 0;  // groupType=2, version A, segment 0
+  raw0[6] = (uint8_t)(blockB0 >> 8);
+  raw0[7] = (uint8_t)(blockB0 & 0xFF);
+  raw0[8] = 'T';
+  raw0[9] = 'E';
+  raw0[10] = 'S';
+  raw0[11] = 'T';
+  radio.decodeRdsGroup(raw0);
+
+  uint8_t raw1[13] = {};
+  uint16_t blockB1 = (2u << 12) | (0u << 11) | 1;  // segment 1
+  raw1[6] = (uint8_t)(blockB1 >> 8);
+  raw1[7] = (uint8_t)(blockB1 & 0xFF);
+  raw1[8] = 'M';
+  raw1[9] = 'S';
+  raw1[10] = 'G';
+  raw1[11] = '1';
+  radio.decodeRdsGroup(raw1);
+
+  TEST_ASSERT_EQUAL_STRING_LEN("TESTMSG1", radio.radioText(), 8);
+}
+
+void test_decode_rds_group_assembles_radiotext_2b_via_block_d_only() {
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
+  radio.begin();
+
+  // Version B (2 chars/segment from Block D only): "HI" then "!!".
+  uint8_t raw0[13] = {};
+  uint16_t blockB0 = (2u << 12) | (1u << 11) | 0;  // groupType=2, version B, segment 0
+  raw0[6] = (uint8_t)(blockB0 >> 8);
+  raw0[7] = (uint8_t)(blockB0 & 0xFF);
+  raw0[10] = 'H';
+  raw0[11] = 'I';
+  radio.decodeRdsGroup(raw0);
+
+  uint8_t raw1[13] = {};
+  uint16_t blockB1 = (2u << 12) | (1u << 11) | 1;  // segment 1
+  raw1[6] = (uint8_t)(blockB1 >> 8);
+  raw1[7] = (uint8_t)(blockB1 & 0xFF);
+  raw1[10] = '!';
+  raw1[11] = '!';
+  radio.decodeRdsGroup(raw1);
+
+  TEST_ASSERT_EQUAL_STRING_LEN("HI!!", radio.radioText(), 4);
+}
+
+void test_decode_rds_group_clears_radiotext_when_the_ab_flag_flips() {
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
+  radio.begin();
+
+  uint8_t raw0[13] = {};
+  uint16_t blockB0 = (2u << 12) | (1u << 11) | (0u << 4) | 0;  // A/B flag 0, segment 0
+  raw0[6] = (uint8_t)(blockB0 >> 8);
+  raw0[7] = (uint8_t)(blockB0 & 0xFF);
+  raw0[10] = 'H';
+  raw0[11] = 'I';
+  radio.decodeRdsGroup(raw0);
+  TEST_ASSERT_EQUAL_STRING_LEN("HI", radio.radioText(), 2);
+
+  uint8_t raw1[13] = {};
+  uint16_t blockB1 = (2u << 12) | (1u << 11) | (1u << 4) | 1;  // A/B flag flips to 1, segment 1
+  raw1[6] = (uint8_t)(blockB1 >> 8);
+  raw1[7] = (uint8_t)(blockB1 & 0xFF);
+  raw1[10] = 'Y';
+  raw1[11] = 'Y';
+  radio.decodeRdsGroup(raw1);
+
+  // The flip clears the message (index 0 goes back to NUL) even though the
+  // new segment's bytes land later in the buffer -- a fresh message starting
+  // mid-buffer must not appear to continue the old one.
+  TEST_ASSERT_EQUAL_STRING("", radio.radioText());
+}
+
+void test_decode_rds_group_ignores_an_unrelated_group_type() {
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
+  radio.begin();
+
+  uint8_t raw[13] = {};
+  uint16_t blockB = (5u << 12);  // group type 5 -- neither 0 (PS) nor 2 (RadioText)
+  raw[6] = (uint8_t)(blockB >> 8);
+  raw[7] = (uint8_t)(blockB & 0xFF);
+  raw[10] = 'X';
+  raw[11] = 'X';
+  radio.decodeRdsGroup(raw);
+
+  TEST_ASSERT_EQUAL_STRING("", radio.stationName());
+  TEST_ASSERT_EQUAL_STRING("", radio.radioText());
+}
+
+void test_poll_rds_text_does_nothing_while_muted() {
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
+  radio.begin();
+  radio.setMuted(true);
+
+  radio.pollRdsText();
+
+  TEST_ASSERT_EQUAL_STRING("", radio.stationName());
+}
+
+void test_poll_rds_text_does_nothing_when_radio_is_unavailable() {
+  SI4735::setSimulatedPresent(false);
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
+  radio.begin();
+
+  radio.pollRdsText();  // must not hang/crash with no chip present
+
+  TEST_ASSERT_EQUAL_STRING("", radio.stationName());
+}
+
 int main(int argc, char **argv) {
   (void)argc;
   (void)argv;
@@ -648,5 +814,13 @@ int main(int argc, char **argv) {
   RUN_TEST(test_implausible_rds_year_is_rejected);
   RUN_TEST(test_disabled_rds_sync_never_retunes_even_while_muted_and_needing_fallback);
   RUN_TEST(test_disabled_rds_sync_ignores_a_simulated_ct_frame_even_while_idle);
+  RUN_TEST(test_station_name_and_radio_text_are_empty_before_anything_decoded);
+  RUN_TEST(test_decode_rds_group_assembles_ps_name_across_all_segments);
+  RUN_TEST(test_decode_rds_group_assembles_radiotext_2a_via_block_c_and_d);
+  RUN_TEST(test_decode_rds_group_assembles_radiotext_2b_via_block_d_only);
+  RUN_TEST(test_decode_rds_group_clears_radiotext_when_the_ab_flag_flips);
+  RUN_TEST(test_decode_rds_group_ignores_an_unrelated_group_type);
+  RUN_TEST(test_poll_rds_text_does_nothing_while_muted);
+  RUN_TEST(test_poll_rds_text_does_nothing_when_radio_is_unavailable);
   return UNITY_END();
 }

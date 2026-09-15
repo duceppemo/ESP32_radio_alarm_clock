@@ -2,6 +2,11 @@
 
 #include <Arduino.h>
 
+// Bump manually on every release-worthy change (no build-time git/CI wiring
+// for this yet). Shown on the TFT boot screen (main.cpp) so a given unit's
+// running build is identifiable at a glance without a serial connection.
+constexpr const char *FirmwareVersion = "0.1.0";
+
 // ---------------------------------------------------------------------------
 // Pin assignments off the shared I2C bus (see docs/wiring-diagram.html).
 // Confirmed on real hardware: RadioReset, SnoozeButton, VolumeUp, VolumeDown
@@ -37,8 +42,11 @@ constexpr uint8_t MinSnoozeMinutes = 1;
 constexpr uint8_t MaxSnoozeMinutes = 60;
 
 // Gradual/"sunrise" wake: volume ramps from WakeRampStartVolume up to
-// whatever volume was last set, over WakeRampSeconds.
-constexpr uint16_t WakeRampSeconds = 90;
+// whatever volume was last set, over WakeRampSeconds. Was 90s -- live
+// testing found that dragged on too long at the quiet starting volume
+// before becoming clearly audible, so shortened to 15s; that turned out
+// too abrupt in turn, so settled on 30s.
+constexpr uint16_t WakeRampSeconds = 30;
 constexpr uint8_t WakeRampStartVolume = 4;
 
 // If waking via radio, how long to let it ramp before checking for a
@@ -86,6 +94,17 @@ constexpr uint16_t SeekSnrThreshold = 3;
 // in community SI4735 seek implementations), not measured against real
 // AGC/AFC settle time on this specific board.
 constexpr uint16_t SeekSettleMs = 30;
+
+// Bounded stand-ins for the PU2CLR SI4735 library's own waitToSend()/
+// getRdsStatus() retry timing (300us/poll, matching the library's
+// MIN_DELAY_WAIT_SEND_LOOP) -- capped rather than unbounded, since an
+// unbounded version of this exact call is what froze the whole device once
+// already (see RadioTuner::readRdsGroupSafely()). Guesses at reasonable
+// ceilings, not measured against real broadcast timing.
+constexpr uint16_t RdsCtsPollDelayUs = 300;
+constexpr uint8_t RdsMaxCtsPolls = 50;  // ~15ms worst case
+constexpr uint8_t RdsMaxErrRetries = 3;
+
 constexpr uint8_t DefaultVolume = 30;    // SI4735 volume range is 0-63
 constexpr uint8_t MaxPresets = 6;
 constexpr uint16_t MaxSleepTimerMinutes = 120;

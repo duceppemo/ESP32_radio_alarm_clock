@@ -17,6 +17,14 @@ static const char kDashboardHtml[] = R"rawliteral(
   section { background: #1c2128; border-radius: 10px; padding: 1rem; margin-bottom: 1rem; }
   label { display: block; margin: 0.5rem 0 0.2rem; font-size: 0.85rem; color: #9aa5b1; }
   input[type=text], input[type=password], input[type=number], select, textarea { width: 100%; box-sizing: border-box; padding: 0.5rem; border-radius: 6px; border: 1px solid #3a4450; background: #12151a; color: #e8eaed; font-family: inherit; }
+  /* Hour/minute alarm fields: the default width only left room for one
+     digit before the browser's native up/down spinner, hiding the second
+     digit -- padding around the spinner didn't help since its rendered
+     width isn't reserved by padding, it just overlaps it. Removing the
+     spinner outright (typing/scrolling still work) is the reliable fix. */
+  input[type=number].time-input { width: 3rem; padding: 0.5rem 0.3rem; text-align: center; -moz-appearance: textfield; appearance: textfield; }
+  input[type=number].time-input::-webkit-outer-spin-button,
+  input[type=number].time-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
   button { padding: 0.5rem 0.9rem; border-radius: 6px; border: none; background: #3a6df0; color: white; margin: 0.2rem 0.3rem 0.2rem 0; cursor: pointer; }
   button.secondary { background: #3a4450; }
   a.button { display: inline-block; text-decoration: none; padding: 0.5rem 0.9rem; border-radius: 6px; background: #3a4450; color: #e8eaed; margin: 0.2rem 0.3rem 0.2rem 0; }
@@ -57,11 +65,13 @@ static const char kDashboardHtml[] = R"rawliteral(
 </section>
 
 <section>
-  <h2>Time zone</h2>
+  <h2>Date &amp; Time</h2>
   <label>Time zone
     <select id="tzSelect" onchange="setTimezone()"></select>
   </label>
   <div class="status">Takes effect on the next NTP sync (immediately, if online).</div>
+  <label>Clock format</label>
+  <button class="secondary" id="timeFormatBtn" onclick="toggleTimeFormat()">--</button>
 </section>
 
 <section>
@@ -75,6 +85,7 @@ static const char kDashboardHtml[] = R"rawliteral(
     <button onclick="radioAction('seekDown')">&laquo; Seek</button>
     <button onclick="radioAction('seekUp')">Seek &raquo;</button>
   </div>
+  <div class="status" id="rdsStatus"></div>
   <label>Tune (MHz)
     <input type="number" id="tuneInput" step="0.1" min="87.5" max="108.0">
   </label>
@@ -102,6 +113,9 @@ static const char kDashboardHtml[] = R"rawliteral(
   <div id="alarmList"></div>
   <div class="row">
     <button onclick="alarmAction('snooze')">Snooze</button>
+    <input type="number" id="snoozeMinutes" min="1" max="60" class="time-input" title="Snooze duration (minutes)">
+    <span class="status">min</span>
+    <button class="secondary" onclick="saveSnoozeMinutes()">Save</button>
     <button class="secondary" onclick="alarmAction('dismiss')">Dismiss</button>
   </div>
 </section>
@@ -125,7 +139,21 @@ async function api(path, options) {
 
 const wakeSources = [['radio', 'Radio'], ['beep', 'Beep'], ['chime', 'Chime']];
 
+// 24h stored/transmitted value <-> 12h digit + AM/PM, for alarm display
+// when status.is24HourFormat is false (mirrors MenuSystem's TFT format).
+function to12Hour(h24) {
+  const period = h24 < 12 ? 'AM' : 'PM';
+  let h12 = h24 % 12;
+  if (h12 === 0) h12 = 12;
+  return { h12, period };
+}
+function to24Hour(h12, period) {
+  const h = h12 % 12; // 12 AM/PM -> 0
+  return period === 'PM' ? h + 12 : h;
+}
+
 let rebooting = false;
+let is24HourFormat = true;  // kept in sync by refresh(); toggleTimeFormat() flips this
 
 // Was 5 separate requests (status/security/timezone/radio/alarms) every
 // 2s -- each one blocks on the device's shared state lock until loop()
@@ -159,11 +187,16 @@ async function refresh() {
 
     const tzSelect = document.getElementById('tzSelect');
     if (tzSelect.dataset.loaded) tzSelect.value = status.timezoneIndex;
+    is24HourFormat = status.is24HourFormat;
+    document.getElementById('timeFormatBtn').textContent =
+      is24HourFormat ? 'Switch to 12-hour' : 'Switch to 24-hour';
 
     const radio = status.radio;
     const regionSelect = document.getElementById('regionSelect');
     if (regionSelect.dataset.loaded) regionSelect.value = radio.regionIndex;
     document.getElementById('radioFreq').textContent = (radio.frequency10kHz / 100).toFixed(1) + ' MHz';
+    document.getElementById('rdsStatus').textContent =
+      [radio.stationName, radio.radioText].filter(Boolean).join(' — ');
     document.getElementById('volumeValue').textContent = radio.volume;
     // Same clobbering guard as the alarm list/username field above --
     // don't yank the slider mid-drag.
@@ -175,14 +208,36 @@ async function refresh() {
     const presetsEl = document.getElementById('presets');
     presetsEl.innerHTML = '';
     radio.presets.forEach((freq, i) => {
+      const wrap = document.createElement('span');
+      wrap.style.display = 'inline-flex';
+      wrap.style.marginRight = '0.3rem';
+
       const b = document.createElement('button');
       b.className = 'secondary';
+      b.style.margin = '0.2rem 0';
       b.textContent = freq ? (freq / 100).toFixed(1) : `Set ${i + 1}`;
       b.onclick = () => freq ? radioPreset('recall', i) : radioPreset('store', i);
-      presetsEl.appendChild(b);
+      wrap.appendChild(b);
+
+      if (freq) {
+        // Tapping the preset itself always recalls it once assigned -- this
+        // is the only way to overwrite it with the current frequency.
+        const reassign = document.createElement('button');
+        reassign.className = 'secondary';
+        reassign.title = 'Reassign to current frequency';
+        reassign.textContent = '✎';
+        reassign.style.margin = '0.2rem 0 0.2rem 1px';
+        reassign.style.padding = '0.5rem 0.6rem';
+        reassign.onclick = () => radioPreset('store', i);
+        wrap.appendChild(reassign);
+      }
+
+      presetsEl.appendChild(wrap);
     });
 
     const alarms = status.alarms;
+    const snoozeMinutesInput = document.getElementById('snoozeMinutes');
+    if (document.activeElement !== snoozeMinutesInput) snoozeMinutesInput.value = alarms.snoozeMinutes;
     const list = document.getElementById('alarmList');
     // Skip the rebuild while a field inside the list is being edited, so an
     // in-progress edit isn't wiped out by a poll that lands mid-keystroke.
@@ -192,13 +247,24 @@ async function refresh() {
     const editing = list.contains(active) && (active.tagName === 'INPUT' || active.tagName === 'SELECT');
     if (!editing) {
       list.innerHTML = '';
+      const use12h = !status.is24HourFormat;
       alarms.alarms.forEach((a, i) => {
         const div = document.createElement('div');
         div.className = 'row' + (status.alarmState !== 'idle' && alarms.ringingIndex === i ? ' alarm-ringing' : '');
+        const hour12 = use12h ? to12Hour(a.hour) : null;
+        const hourValue = use12h ? hour12.h12 : a.hour;
+        const hourMin = use12h ? 1 : 0;
+        const hourMax = use12h ? 12 : 23;
+        const ampmSelect = use12h ? `
+          <select id="p${i}" style="width:auto">
+            <option value="AM" ${hour12.period === 'AM' ? 'selected' : ''}>AM</option>
+            <option value="PM" ${hour12.period === 'PM' ? 'selected' : ''}>PM</option>
+          </select>` : '';
         div.innerHTML = `
           <input type="checkbox" ${a.enabled ? 'checked' : ''} onchange="updateAlarm(${i})" id="en${i}">
-          <input type="number" value="${a.hour}" min="0" max="23" style="width:3.5em" id="h${i}">:
-          <input type="number" value="${a.minute}" min="0" max="59" style="width:3.5em" id="m${i}">
+          <input type="number" value="${hourValue}" min="${hourMin}" max="${hourMax}" class="time-input" id="h${i}">:
+          <input type="number" value="${a.minute}" min="0" max="59" class="time-input" id="m${i}">
+          ${ampmSelect}
           <span class="days">${dayLabels.map((d, di) => `<label><input type="checkbox" ${a.days[di] ? 'checked' : ''} id="d${i}_${di}">${d}</label>`).join('')}</span>
           <select id="w${i}" style="width:auto">${wakeSources.map(([v, l]) => `<option value="${v}" ${a.wakeSource === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
           <button onclick="updateAlarm(${i})">Save</button>`;
@@ -258,6 +324,12 @@ async function setTimezone() {
   refresh();
 }
 
+async function toggleTimeFormat() {
+  await api('/api/timeformat', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ is24Hour: !is24HourFormat }) });
+  refresh();
+}
+
 async function setRegion() {
   const index = parseInt(document.getElementById('regionSelect').value, 10);
   await radioAction('setRegion', index);
@@ -279,11 +351,14 @@ async function radioAction(action, value) {
 
 async function updateAlarm(i) {
   const days = dayLabels.map((_, di) => document.getElementById(`d${i}_${di}`).checked);
+  let hour = parseInt(document.getElementById(`h${i}`).value, 10);
+  const periodEl = document.getElementById(`p${i}`);  // only present in 12h format
+  if (periodEl) hour = to24Hour(hour, periodEl.value);
   await api('/api/alarms', { method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       index: i,
       enabled: document.getElementById(`en${i}`).checked,
-      hour: parseInt(document.getElementById(`h${i}`).value, 10),
+      hour,
       minute: parseInt(document.getElementById(`m${i}`).value, 10),
       wakeSource: document.getElementById(`w${i}`).value,
       days,
@@ -293,6 +368,13 @@ async function updateAlarm(i) {
 
 async function alarmAction(action) {
   await api('/api/alarm/' + action, { method: 'POST' });
+  refresh();
+}
+
+async function saveSnoozeMinutes() {
+  const minutes = parseInt(document.getElementById('snoozeMinutes').value, 10);
+  await api('/api/alarms/snooze-minutes', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ minutes }) });
   refresh();
 }
 

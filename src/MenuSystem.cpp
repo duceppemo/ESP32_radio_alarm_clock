@@ -434,9 +434,12 @@ void MenuSystem::handleInput(const DateTime &now) {
 
 void MenuSystem::render(const DateTime &now, const String &wifiStatusLine) {
   // Home's lock-screen-style clock only shows H:MM (no seconds), so it only
-  // needs to redraw once a minute rather than every tick.
+  // needs to redraw once a minute rather than every tick. Snoozed now uses
+  // this same lock-screen layout (see renderHome()), so it gets the same
+  // treatment; Ringing still fully redraws on every dirty_ instead (its
+  // "Ringing"/hint text is static, so per-minute ticking buys it nothing).
   static uint32_t lastClockRedrawMin = 61;
-  bool isHomeClock = screen_ == MenuScreen::Home && alarms_.state() == AlarmState::Idle;
+  bool isHomeClock = screen_ == MenuScreen::Home && alarms_.state() != AlarmState::Ringing;
 
   // Volume Up/Down and the snooze button's sleep-timer toggle are read
   // directly in main.cpp's loop(), never through handleInput() -- so they
@@ -557,6 +560,23 @@ void MenuSystem::drawBatteryStatusIcon(int16_t x, int16_t y) {
   canvas_.print(pctBuf);
 }
 
+void MenuSystem::drawAlarmStatusIcon(int16_t x, int16_t y, bool anyEnabled, bool snoozing) {
+  if (!anyEnabled) return;
+
+  // Orange while a snooze is in effect (an alarm can only be snoozing if
+  // one was enabled and rang, so this is layered on the same glyph rather
+  // than needing separate real estate) -- same reused-glyph-recolored
+  // pattern as the battery icon's low-charge red and the Radio screen's
+  // on-air icon.
+  uint16_t color = snoozing ? ST77XX_ORANGE : ST77XX_WHITE;
+  int16_t cx = x + 6;
+  int16_t cy = y + 6;
+  canvas_.fillCircle(cx, cy - 1, 3, color);
+  canvas_.fillRect(cx - 3, cy - 1, 6, 2, color);
+  canvas_.drawFastHLine(cx - 4, cy + 1, 8, color);
+  canvas_.fillCircle(cx, cy + 4, 1, color);
+}
+
 void MenuSystem::drawAppIcon(int16_t x, int16_t y, IconGlyph glyph, uint16_t bgColor, bool focused) {
   constexpr int16_t kSize = 20;
   canvas_.fillRoundRect(x, y, kSize, kSize, 5, bgColor);
@@ -598,7 +618,15 @@ void MenuSystem::drawAppIcon(int16_t x, int16_t y, IconGlyph glyph, uint16_t bgC
 }
 
 void MenuSystem::renderHome(const DateTime &now) {
-  if (alarms_.state() != AlarmState::Idle) {
+  // Only a live Ringing takes over the whole screen -- Snoozed falls through
+  // to the normal lock-screen layout below (clock/date/status icons) with
+  // just the alarm status icon turning orange, so the snooze period doesn't
+  // block seeing the actual time. Was both states full-screen before this
+  // got reported as too intrusive to sit through for a whole snooze
+  // interval. tap:snooze/hold:dismiss still work identically either way --
+  // see the Home case in handleInput(), which keys off alarms_.state()
+  // directly rather than what's currently drawn.
+  if (alarms_.state() == AlarmState::Ringing) {
     canvas_.setTextColor(ST77XX_RED);
     printHeader(30, 0, "ALARM");
 
@@ -612,7 +640,7 @@ void MenuSystem::renderHome(const DateTime &now) {
 
     canvas_.setTextColor(ST77XX_ORANGE);
     canvas_.setCursor(0, 54);
-    canvas_.println(alarms_.state() == AlarmState::Snoozed ? "Snoozed" : "Ringing");
+    canvas_.println("Ringing");
 
     printHint(0, 104, "tap:snooze hold:dismiss");
     return;
@@ -621,26 +649,32 @@ void MenuSystem::renderHome(const DateTime &now) {
   // iOS-lock-screen-style layout: status icons top-right (no carrier/signal
   // area -- nothing on this device maps to that), centered date, big clock,
   // and a bottom row of app-icon-style badges instead of plain nav text.
-  // Traded away versus the old layout: the inline "Alarms set"/"No radio"/
-  // sleep-timer/battery-percent text rows are gone -- battery now only
-  // shows via the status-bar icon, and there's no at-a-glance alarm/radio/
-  // sleep-timer detail anymore (only on their own screens). Worth revisiting
-  // if that ends up missed in practice.
+  // Traded away versus the old layout: the inline "No radio"/sleep-timer/
+  // battery-percent text rows are gone -- battery now only shows via the
+  // status-bar icon, and there's no at-a-glance radio/sleep-timer detail
+  // anymore (only on their own screens); "Alarms set" got its own status-bar
+  // icon back (below) after that gap was reported in practice.
+  bool anyAlarmEnabled = false;
+  for (uint8_t i = 0; i < AlarmClock::count(); i++) {
+    if (alarms_.alarm(i).enabled) {
+      anyAlarmEnabled = true;
+      break;
+    }
+  }
+  drawAlarmStatusIcon(148, 3, anyAlarmEnabled, alarms_.state() == AlarmState::Snoozed);
   drawWifiStatusIcon(170, 3, wifiOnline_);
   drawBatteryStatusIcon(210, 3);
 
+  // Top-left corner, same row as the status-bar icons on the right --
+  // was centered lower down, but that left the top-left corner empty and
+  // put the date awkwardly close to the big clock below it.
   canvas_.setTextSize(1);
   canvas_.setFont(&FreeSansBold9pt7b);
   canvas_.setTextColor(ST77XX_WHITE);
   char dateBuf[12];
   snprintf(dateBuf, sizeof(dateBuf), "%s %s %u", dayOfWeekName(now.dayOfTheWeek()), monthName(now.month()),
            now.day());
-  {
-    int16_t dx1, dy1;
-    uint16_t dw, dh;
-    canvas_.getTextBounds(dateBuf, 0, 0, &dx1, &dy1, &dw, &dh);
-    setCursorTop((kMenuScreenWidth - (int16_t)dw) / 2, 18);
-  }
+  setCursorTop(2, 3);
   canvas_.print(dateBuf);
   canvas_.setFont(nullptr);
 
@@ -739,8 +773,15 @@ void MenuSystem::renderAlarmList() {
   for (uint8_t i = 0; i < AlarmClock::count(); i++) {
     const Alarm &a = alarms_.alarm(i);
     canvas_.setTextColor(i == cursor_ ? ST77XX_WHITE : kDimGray);
-    canvas_.printf("%02d:%02d %-3s %s\n", a.hour, a.minute, a.enabled ? "ON" : "off",
-                   daysLabel(a.daysMask));
+    char timeBuf[7];
+    if (timeFormat_.is24Hour()) {
+      snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d", a.hour, a.minute);
+    } else {
+      uint8_t h12 = a.hour % 12;
+      if (h12 == 0) h12 = 12;
+      snprintf(timeBuf, sizeof(timeBuf), "%d:%02d%c", h12, a.minute, a.hour >= 12 ? 'P' : 'A');
+    }
+    canvas_.printf("%-6s %-3s %s\n", timeBuf, a.enabled ? "ON" : "off", daysLabel(a.daysMask));
   }
 
   printHint(0, 118, "tap:edit hold:back");
@@ -768,7 +809,13 @@ void MenuSystem::renderAlarmEdit() {
         canvas_.println(editingAlarm_.enabled ? ": On" : ": Off");
         break;
       case 1:
-        canvas_.printf(": %02d\n", editingAlarm_.hour);
+        if (timeFormat_.is24Hour()) {
+          canvas_.printf(": %02d\n", editingAlarm_.hour);
+        } else {
+          uint8_t h12 = editingAlarm_.hour % 12;
+          if (h12 == 0) h12 = 12;
+          canvas_.printf(": %d %s\n", h12, editingAlarm_.hour >= 12 ? "PM" : "AM");
+        }
         break;
       case 2:
         canvas_.printf(": %02d\n", editingAlarm_.minute);
@@ -838,12 +885,20 @@ void MenuSystem::renderRadio() {
   printBold(0, y, volBuf);
   y += 16;
 
-  // RDS Clock Time sync is disabled (see RadioTuner::updateRdsSync()) --
-  // this line is a placeholder rather than real station/RadioText data
-  // until that gets a proper fix. Dim gray like Home's subtitle, not a
-  // functional color, since it isn't reporting a live status.
-  canvas_.setTextColor(kDimGray);
-  printBold(0, y, "RDS: unavailable");
+  // Station name (PS), harvested passively by RadioTuner::pollRdsText() --
+  // see RadioTuner.h. RadioText is dashboard-only (screen space here is too
+  // tight for its up to 64 chars without scrolling). Falls back to a dim
+  // placeholder until something's actually been decoded (may take a few
+  // seconds -- the PS name needs all 4 RDS segments to arrive). RDS Clock
+  // Time sync remains a separate, still-disabled feature (see
+  // RadioTuner::updateRdsSync()) and is untouched by this.
+  if (radio_.stationName()[0] != '\0') {
+    canvas_.setTextColor(ST77XX_WHITE);
+    printBold(0, y, radio_.stationName());
+  } else {
+    canvas_.setTextColor(kDimGray);
+    printBold(0, y, "RDS: unavailable");
+  }
   y += 16;
 
   if (radio_.sleepTimerActive()) {
