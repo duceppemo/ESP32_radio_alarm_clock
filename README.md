@@ -6,12 +6,12 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-ESP32--S3-3f4750)](https://www.adafruit.com/product/5691)
 [![Build system](https://img.shields.io/badge/build-PlatformIO-orange)](https://platformio.org/)
-[![Status](https://img.shields.io/badge/status-firmware%20ready%2C%20hardware%20pending-yellow)](docs/firmware.md)
+[![Status](https://img.shields.io/badge/status-hardware%20bring--up%20in%20progress-yellow)](docs/firmware.md)
 
 <p align="center">
   <img src="docs/images/hero.png" alt="ESP32 radio alarm clock glowing softly on a nightstand beside a bed, morning light coming through the window" width="760">
 </p>
-<p align="center"><sub><i>Concept render — hardware not yet built (see Status badge above).</i></sub></p>
+<p align="center"><sub><i>Concept render — the real thing is a bare board on a bench right now, not yet in an enclosure (see Status badge above).</i></sub></p>
 
 ## Contents
 
@@ -20,6 +20,7 @@
 - [Hardware](#hardware)
 - [Wiring](#wiring)
 - [Firmware](#firmware)
+- [Status & what's next](#status--whats-next)
 - [Getting started](#getting-started)
 - [Controls](#controls)
 - [Enclosure](#enclosure)
@@ -39,7 +40,7 @@ Off-the-shelf radio alarm clocks are either dumb (no scheduling beyond one or tw
 - **OTA firmware updates** — reflash over WiFi from the dashboard once it's built and sealed up.
 - **Real battery monitoring** — an onboard fuel-gauge chip (MAX17048), not a voltage-divider guess.
 - **NTP time sync with a selectable timezone** — corrects the RTC automatically once on WiFi, so it doesn't slowly drift; pick your timezone (DST rule included) from the on-device menu or the dashboard, nothing hardcoded.
-- **RDS Clock Time fallback sync** — if WiFi/NTP isn't available, the tuner passively picks up a broadcast station's RDS time signal as a backup (only ever retuning silently while already muted and idle, never interrupting what you're listening to).
+- **RDS Clock Time fallback sync** *(currently disabled — see [`docs/firmware.md`](docs/firmware.md) known gaps)* — the design: if WiFi/NTP isn't available, the tuner passively picks up a broadcast station's RDS time signal as a backup (only ever retuning silently while already muted and idle, never interrupting what you're listening to).
 - **Region-aware FM tuning** — pick Americas, Europe/Rest of World, or Japan from the dashboard; sets the correct de-emphasis and band for your part of the world.
 - **Auto-dimming** — the ambient light sensor (VEML7700) fades the TFT backlight and 7-segment display down in a dark room and back up in daylight, never fully off.
 - **On-device menu** — full control from the built-in color TFT and three buttons, no phone required.
@@ -77,7 +78,18 @@ See [`docs/wiring-diagram.html`](docs/wiring-diagram.html) for wiring notes/assu
 
 A PlatformIO project targeting the ESP32-S3 via the [pioarduino](https://github.com/pioarduino/platform-espressif32) platform fork. Covers alarm scheduling (sunrise ramp + dead-air fallback), FM radio control, an on-device TFT menu, battery monitoring, NTP time sync, auto-dimming, OTA updates, and the WiFi setup/status web dashboard.
 
-It builds clean and its hardware-independent logic (alarm scheduling, radio wrapper, wake orchestration, on-device menu, the snooze button's dual behavior, timezone selection, the auto-dim brightness curve) has 68 passing unit tests that run on every push — see the CI badge above — but it hasn't been flashed to real hardware yet, since none of the parts have arrived. See [`docs/firmware.md`](docs/firmware.md) for the module architecture, build/flash instructions, the dashboard's API, and current known gaps.
+It builds clean and its hardware-independent logic (alarm scheduling, radio wrapper, wake orchestration, on-device menu, region/timezone selection, the auto-dim brightness curve) has 110 passing unit tests that run on every push — see the CI badge above. See [`docs/firmware.md`](docs/firmware.md) for the module architecture, build/flash instructions, the dashboard's API, and current known gaps — and [Status & what's next](#status--whats-next) below for where real-hardware bring-up stands.
+
+## Status & what's next
+
+**Wired and confirmed working on real hardware:** RTC, ambient light sensor, 7-segment display, battery fuel gauge, FM radio (tuning, seeking, region switching), the onboard TFT menu buttons, and the snooze/volume panel buttons.
+
+**Still open:**
+
+- The buzzer (alarm tone / dead-air fallback sound) isn't wired or tested yet.
+- The dead-air RSSI threshold, buzzer tone pattern, and auto-dim lux thresholds are still best-guess values pending real-world tuning — see [`docs/firmware.md`](docs/firmware.md#known-gaps).
+- RDS Clock Time fallback sync is implemented but disabled — the underlying library call it needs turned out to hang indefinitely under real (weak-signal) reception. Re-enabling it needs either a patched library or a rewritten status read; see the known gaps for detail.
+- No enclosure yet — see [Enclosure](#enclosure) below.
 
 ## Getting started
 

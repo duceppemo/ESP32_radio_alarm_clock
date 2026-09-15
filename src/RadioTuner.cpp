@@ -62,15 +62,74 @@ void RadioTuner::tune(uint16_t frequency10kHz) {
   si4735_.setFrequency(frequency10kHz);
 }
 
+void RadioTuner::stepUp() {
+  const RegionEntry &r = region_.current();
+  uint16_t current = frequency10kHz();
+  tune(current >= r.fmBandEnd ? r.fmBandStart : current + RadioConfig::FmStep);
+}
+
+void RadioTuner::stepDown() {
+  const RegionEntry &r = region_.current();
+  uint16_t current = frequency10kHz();
+  tune(current <= r.fmBandStart ? r.fmBandEnd : current - RadioConfig::FmStep);
+}
+
 void RadioTuner::seekUp() {
   rdsFallbackActive_ = false;
   if (!available_) return;
-  si4735_.seekStationUp();
+  const RegionEntry &r = region_.current();
+  uint16_t start = frequency10kHz();
+  uint16_t candidate = start;
+  // See Config.h's SeekRssiThreshold/SeekSnrThreshold comment for why this
+  // steps and settles itself rather than using the chip's own hardware
+  // seek. Bounded to one full pass of the band (never less than 1, even if
+  // FmStep somehow didn't divide it evenly) so this can't loop forever.
+  uint16_t totalSteps = (r.fmBandEnd - r.fmBandStart) / RadioConfig::FmStep + 1;
+  for (uint16_t i = 0; i < totalSteps; i++) {
+    candidate = (candidate >= r.fmBandEnd) ? r.fmBandStart : candidate + RadioConfig::FmStep;
+    si4735_.setFrequency(candidate);
+    delay(RadioConfig::SeekSettleMs);
+    if (rssi() >= RadioConfig::SeekRssiThreshold && snr() >= RadioConfig::SeekSnrThreshold) {
+      climbToLocalPeak(/*seekingUp=*/true);
+      return;
+    }
+  }
+  si4735_.setFrequency(start);  // nothing in the whole band cleared the threshold
 }
 void RadioTuner::seekDown() {
   rdsFallbackActive_ = false;
   if (!available_) return;
-  si4735_.seekStationDown();
+  const RegionEntry &r = region_.current();
+  uint16_t start = frequency10kHz();
+  uint16_t candidate = start;
+  uint16_t totalSteps = (r.fmBandEnd - r.fmBandStart) / RadioConfig::FmStep + 1;
+  for (uint16_t i = 0; i < totalSteps; i++) {
+    candidate = (candidate <= r.fmBandStart) ? r.fmBandEnd : candidate - RadioConfig::FmStep;
+    si4735_.setFrequency(candidate);
+    delay(RadioConfig::SeekSettleMs);
+    if (rssi() >= RadioConfig::SeekRssiThreshold && snr() >= RadioConfig::SeekSnrThreshold) {
+      climbToLocalPeak(/*seekingUp=*/false);
+      return;
+    }
+  }
+  si4735_.setFrequency(start);
+}
+
+void RadioTuner::climbToLocalPeak(bool seekingUp) {
+  const RegionEntry &r = region_.current();
+  uint16_t bestFreq = frequency10kHz();
+  uint8_t bestSnr = snr();
+  for (;;) {
+    uint16_t next = seekingUp ? bestFreq + RadioConfig::FmStep : bestFreq - RadioConfig::FmStep;
+    if (next < r.fmBandStart || next > r.fmBandEnd) break;  // band edge -- don't wrap mid-climb
+    si4735_.setFrequency(next);
+    delay(RadioConfig::SeekSettleMs);
+    uint8_t nextSnr = snr();
+    if (nextSnr <= bestSnr) break;  // signal is falling off again -- bestFreq was the peak
+    bestFreq = next;
+    bestSnr = nextSnr;
+  }
+  si4735_.setFrequency(bestFreq);
 }
 
 void RadioTuner::setVolume(uint8_t volume) {
@@ -102,7 +161,16 @@ uint16_t RadioTuner::frequency10kHz() {
 }
 uint8_t RadioTuner::rssi() {
   if (!available_) return 0;
+  // getCurrentRSSI() just returns a cached field -- nothing populates it
+  // without this call first (this is why the Radio screen's "Sig" line
+  // always read 0: RadioTuner never made this call at all).
+  si4735_.getCurrentReceivedSignalQuality();
   return si4735_.getCurrentRSSI();
+}
+uint8_t RadioTuner::snr() {
+  if (!available_) return 0;
+  si4735_.getCurrentReceivedSignalQuality();  // same query populates both RSSI and SNR
+  return si4735_.getCurrentSNR();
 }
 
 void RadioTuner::storePreset(uint8_t index, uint16_t frequency10kHz) {
@@ -169,6 +237,20 @@ void RadioTuner::pollRdsForTime() {
 }
 
 void RadioTuner::updateRdsSync(bool needsFallback) {
+  // Disabled -- see the class comment on updateRdsSync() in RadioTuner.h.
+  // The PU2CLR SI4735 library's getRdsStatus() (reached via
+  // rdsBeginQuery()/getRdsDateTime(), called from pollRdsForTime() below)
+  // retries forever on an ERR status with no timeout and never re-issues
+  // the command, so once ERR sticks -- easy to hit with a real station on
+  // a weak signal or one that doesn't broadcast RDS at all -- it hangs
+  // loop() permanently (confirmed live: the whole clock/alarm/menu froze,
+  // not just the radio). Left in place, inert, rather than ripped out, in
+  // case a bounded-retry patch to the vendored library makes it safe to
+  // re-enable later.
+  (void)needsFallback;
+  return;
+
+#if 0  // kept for reference -- see the disabled-return above
   if (!available_) return;
 
   if (!muted_) {
@@ -202,6 +284,7 @@ void RadioTuner::updateRdsSync(bool needsFallback) {
   // Already muted, so re-asserting the frequency -- which restarts the
   // chip's RDS group-sync acquisition -- produces no audible change.
   si4735_.setFrequency(si4735_.getFrequency());
+#endif
 }
 
 bool RadioTuner::consumeRdsTimeSync() {

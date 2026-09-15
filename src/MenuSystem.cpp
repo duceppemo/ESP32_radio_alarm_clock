@@ -149,10 +149,14 @@ MenuSystem::MenuSystem(Adafruit_ST7789 &tft, AlarmClock &alarms, RadioTuner &rad
 
 void MenuSystem::begin() {
   pinMode(Pins::MenuSelect, INPUT_PULLUP);
-  // D1/D2 have their own external pull-down on this board -- INPUT_PULLUP
-  // here would fight it. See DebouncedButton's activeHigh for the read side.
-  pinMode(Pins::MenuUp, INPUT);
-  pinMode(Pins::MenuDown, INPUT);
+  // D1/D2 read HIGH when pressed (see DebouncedButton's activeHigh for the
+  // read side) and need a pull-down at rest. They don't reliably have one
+  // on this board on their own -- plain INPUT left them floating, which
+  // picked up and held spurious HIGH readings once another I2C device
+  // (the 7-segment display) was added to the bus. INPUT_PULLDOWN enables
+  // the ESP32's own internal pull-down instead of depending on the board.
+  pinMode(Pins::MenuUp, INPUT_PULLDOWN);
+  pinMode(Pins::MenuDown, INPUT_PULLDOWN);
 }
 
 void MenuSystem::update(const DateTime &now, const String &wifiStatusLine, bool wifiOnline) {
@@ -186,16 +190,47 @@ void MenuSystem::handleInput(const DateTime &now) {
   }
 
   // Two flavors of up/down: a plain tap for moving a cursor through a short
-  // list (Home, AlarmList), and an auto-repeating one for adjusting a value
-  // (AlarmEdit fields, radio tuning, Set Time, Timezone) so holding the
-  // button keeps changing it instead of needing repeated taps. triggered()
-  // has a side effect (advances its own repeat schedule) so it's computed
-  // exactly once here per button and reused below, never called again.
+  // list (Home, AlarmList) or changing a value by one step (Radio), and an
+  // auto-repeating one for adjusting a value continuously (AlarmEdit
+  // fields, Set Time, Timezone) so holding the button keeps changing it
+  // instead of needing repeated taps. triggered() has a side effect
+  // (advances its own repeat schedule) so it's computed exactly once here
+  // per button and reused below, never called again.
   bool upTap = up_.justPressed();
   bool downTap = down_.justPressed();
   bool upRepeat = up_.triggered();
   bool downRepeat = down_.triggered();
-  if (!upTap && !downTap && !upRepeat && !downRepeat && !shortPress && !longPress) return;
+
+  // Radio screen only: holding past kLongPressMs seeks instead of taking
+  // repeated taps to step through frequencies one at a time -- deliberately
+  // NOT using upRepeat/downRepeat above, so holding never auto-repeats a
+  // step; it's either a tap (one step) or a long hold (one seek), nothing
+  // in between. See upSeekFired_/downSeekFired_'s comment in MenuSystem.h
+  // for why each latches once it fires.
+  if (upTap) {
+    upPressedAtMs_ = millis();
+    upSeekFired_ = false;
+  }
+  if (downTap) {
+    downPressedAtMs_ = millis();
+    downSeekFired_ = false;
+  }
+  bool upLongHold = up_.isDown() && !upSeekFired_ && millis() - upPressedAtMs_ >= kLongPressMs;
+  bool downLongHold = down_.isDown() && !downSeekFired_ && millis() - downPressedAtMs_ >= kLongPressMs;
+  if (upLongHold) upSeekFired_ = true;
+  if (downLongHold) downSeekFired_ = true;
+
+  // upLongHold/downLongHold must be in this guard too -- without it, the
+  // tick that first crosses kLongPressMs could return early before ever
+  // reaching the Radio case below (upRepeat/downRepeat run on their own
+  // 150ms schedule, independent of the long-press threshold, so they often
+  // aren't also true on that exact tick). upSeekFired_ latches true just
+  // above regardless, so a long press would silently do nothing at all --
+  // indistinguishable from a plain tap having already fired its one step.
+  if (!upTap && !downTap && !upRepeat && !downRepeat && !shortPress && !longPress && !upLongHold &&
+      !downLongHold) {
+    return;
+  }
   dirty_ = true;
 
   switch (screen_) {
@@ -288,8 +323,31 @@ void MenuSystem::handleInput(const DateTime &now) {
 
     case MenuScreen::Radio: {
       if (radio_.available()) {
-        if (upRepeat) radio_.tune(radio_.frequency10kHz() + RadioConfig::FmStep);
-        if (downRepeat) radio_.tune(radio_.frequency10kHz() - RadioConfig::FmStep);
+        // seekUp()/seekDown() block for up to a couple of seconds -- paint
+        // "Seeking..." right now, before making that call, or the screen
+        // would just look frozen for that whole time. wifiStatusLine is
+        // irrelevant here (renderRadio() never reads it), so "" is fine.
+        // dirty_ is forced true afterward so the render() call already
+        // scheduled after handleInput() returns still redraws the actual
+        // result -- this manual one already consumed dirty_ itself.
+        if (upLongHold) {
+          seeking_ = true;
+          render(now, "");
+          radio_.seekUp();
+          seeking_ = false;
+          dirty_ = true;
+        } else if (upTap) {
+          radio_.stepUp();
+        }
+        if (downLongHold) {
+          seeking_ = true;
+          render(now, "");
+          radio_.seekDown();
+          seeking_ = false;
+          dirty_ = true;
+        } else if (downTap) {
+          radio_.stepDown();
+        }
         if (shortPress) radio_.setMuted(!radio_.muted());
       }
       if (longPress) screen_ = MenuScreen::Home;
@@ -379,9 +437,44 @@ void MenuSystem::render(const DateTime &now, const String &wifiStatusLine) {
   // needs to redraw once a minute rather than every tick.
   static uint32_t lastClockRedrawMin = 61;
   bool isHomeClock = screen_ == MenuScreen::Home && alarms_.state() == AlarmState::Idle;
-  if (!dirty_ && !(isHomeClock && now.minute() != lastClockRedrawMin)) return;
+
+  // Volume Up/Down and the snooze button's sleep-timer toggle are read
+  // directly in main.cpp's loop(), never through handleInput() -- so they
+  // never set dirty_. Without this, the Radio screen's Vol/Sleep lines
+  // would freeze on whatever they last drew even though the hardware
+  // (speaker, sleep timer) keeps responding for real. All three reads here
+  // are plain member/millis() reads, not I2C, so polling them every fast-
+  // path tick is free.
+  static uint8_t lastRadioVolume = 0;
+  static bool lastRadioMuted = false;
+  static uint16_t lastRadioSleepMinutes = 0;
+  bool isRadioScreen = screen_ == MenuScreen::Radio && radio_.available();
+  bool radioLive = isRadioScreen && (radio_.volume() != lastRadioVolume ||
+                                      radio_.muted() != lastRadioMuted ||
+                                      radio_.sleepTimerRemainingMinutes() != lastRadioSleepMinutes);
+
+  // Sig/SNR are real I2C queries (RadioTuner::rssi()/snr()), unlike the
+  // three above -- polling them every fast-path tick would hammer the bus
+  // for no visible benefit, but only refreshing them when something else
+  // also changed left them looking frozen between button presses. A plain
+  // timer, independent of any button, is what makes them read live.
+  static uint32_t lastRadioSignalRefreshMs = 0;
+  constexpr uint32_t kRadioSignalRefreshMs = 500;
+  bool radioSignalDue = isRadioScreen && !seeking_ &&
+                         millis() - lastRadioSignalRefreshMs >= kRadioSignalRefreshMs;
+
+  if (!dirty_ && !(isHomeClock && now.minute() != lastClockRedrawMin) && !radioLive &&
+      !radioSignalDue) {
+    return;
+  }
   dirty_ = false;
   lastClockRedrawMin = now.minute();
+  if (isRadioScreen) {
+    lastRadioVolume = radio_.volume();
+    lastRadioMuted = radio_.muted();
+    lastRadioSleepMinutes = radio_.sleepTimerRemainingMinutes();
+  }
+  if (radioSignalDue) lastRadioSignalRefreshMs = millis();
 
   canvas_.fillScreen(ST77XX_BLACK);
   canvas_.setCursor(0, 0);
@@ -709,6 +802,12 @@ void MenuSystem::renderRadio() {
     return;
   }
 
+  // On-air/muted status, as a small icon rather than a text line -- frees
+  // a line below for RDS. Same Radio glyph and size as the header nav icon
+  // (just left of it, same kHeaderIconY), just green/red instead of the
+  // header's fixed purple.
+  drawAppIcon(190, kHeaderIconY, IconGlyph::Radio, radio_.muted() ? kIconRed : kIconGreen, false);
+
   canvas_.setTextSize(2);
   canvas_.setTextColor(ST77XX_WHITE);
   char freqBuf[10];
@@ -716,9 +815,22 @@ void MenuSystem::renderRadio() {
   printBold(0, 22, freqBuf);
 
   int16_t y = 46;
-  char sigBuf[10];
-  snprintf(sigBuf, sizeof(sigBuf), "Sig %u", radio_.rssi());
-  printBold(0, y, sigBuf);
+  if (seeking_) {
+    // Immediate feedback that the long press registered -- seekUp()/
+    // seekDown() below block for up to a couple of seconds with nothing
+    // else updating the display in the meantime, so without this the
+    // screen would look frozen/unresponsive during that wait.
+    canvas_.setTextColor(ST77XX_ORANGE);
+    printBold(0, y, "Seeking...");
+  } else {
+    char sigBuf[20];
+    // SNR alongside RSSI (not just "Sig") since the SI4735's seek hardware
+    // gates on both together -- seeing real numbers here is how
+    // SeekRssiThreshold/SeekSnrThreshold in Config.h should actually get
+    // tuned, rather than guessed again.
+    snprintf(sigBuf, sizeof(sigBuf), "Sig %u SNR %u", radio_.rssi(), radio_.snr());
+    printBold(0, y, sigBuf);
+  }
   y += 16;
 
   char volBuf[10];
@@ -726,8 +838,12 @@ void MenuSystem::renderRadio() {
   printBold(0, y, volBuf);
   y += 16;
 
-  canvas_.setTextColor(radio_.muted() ? ST77XX_RED : ST77XX_GREEN);
-  printBold(0, y, radio_.muted() ? "Muted" : "On air");
+  // RDS Clock Time sync is disabled (see RadioTuner::updateRdsSync()) --
+  // this line is a placeholder rather than real station/RadioText data
+  // until that gets a proper fix. Dim gray like Home's subtitle, not a
+  // functional color, since it isn't reporting a live status.
+  canvas_.setTextColor(kDimGray);
+  printBold(0, y, "RDS: unavailable");
   y += 16;
 
   if (radio_.sleepTimerActive()) {

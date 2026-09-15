@@ -13,7 +13,9 @@
 void setUp() {
   Preferences::resetAll();
   SI4735::resetSimulatedRssi();
+  SI4735::resetSimulatedSnr();
   SI4735::resetSimulatedPresent();
+  SI4735::clearSimulatedSignalAt();
   native_fake_millis_value() = 1000;  // start away from 0 so debounce math is unambiguous
   // native_fake_digital_state() defaults every pin to HIGH (matching the
   // active-low buttons' idle level), which is wrong for MenuUp/MenuDown --
@@ -254,6 +256,156 @@ void test_radio_screen_does_nothing_when_no_radio_is_present() {
   TEST_ASSERT_FALSE(radio.muted());
 
   hold(Pins::MenuSelect, menu);  // long-press back to Home still works
+}
+
+void test_radio_screen_long_hold_seeks_instead_of_repeatedly_stepping() {
+  AlarmClock alarms;
+  alarms.begin();
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
+  radio.begin();
+  uint16_t startFreq = radio.frequency10kHz();
+  Adafruit_ST7789 tft(0, 0, 0);
+  TimezoneStore timezone;
+  timezone.begin();
+  TimeFormatStore timeFormat;
+  timeFormat.begin();
+  MenuSystem menu(tft, alarms, radio, nullptr, nullptr, timezone, timeFormat);
+  menu.begin();
+
+  tap(Pins::MenuDown, menu);    // Home cursor: Alarms(0) -> Radio(1)
+  tap(Pins::MenuSelect, menu);  // enter Radio screen
+
+  // Dead air everywhere except a station several steps above where the
+  // initial tap lands -- only a genuine multi-candidate seek sweep can
+  // reach it; repeated single steps (if holding still triggered those)
+  // couldn't land here by coincidence.
+  SI4735::setSimulatedRssi(0);
+  SI4735::setSimulatedSnr(0);
+  uint16_t target = startFreq + 6 * RadioConfig::FmStep;
+  SI4735::setSimulatedSignalAt(target, 50, 20);
+
+  hold(Pins::MenuUp, menu);  // press fires one immediate step, then the long hold crosses into seek
+
+  // If holding kept auto-repeating stepUp() instead of switching to a seek
+  // once the hold crossed the long-press threshold, this would land 2
+  // FmSteps up (one from the tap, one more from a single repeat), not on
+  // the distant simulated station -- confirms a real seek swept for it.
+  TEST_ASSERT_EQUAL(target, radio.frequency10kHz());
+}
+
+void test_radio_screen_long_hold_fires_seek_even_off_the_repeat_schedule() {
+  // Regression test for a real bug: handleInput()'s early-return guard
+  // didn't include upLongHold/downLongHold, so the specific tick that
+  // first crosses kLongPressMs could return before ever reaching the Radio
+  // case below -- while still latching upSeekFired_/downSeekFired_ true on
+  // the way out, so the seek silently never fired at all (indistinguishable
+  // from a plain tap). hold()'s single big jump past the threshold happened
+  // to always land on a tick where DebouncedButton's own repeat schedule
+  // (every 150ms) was also due, which kept the guard from ever returning
+  // early and masked the bug -- a real device's continuously-running
+  // loop() has no such alignment, so this test polls finely enough (10ms)
+  // to land the long-press tick off that schedule too, the way real
+  // hardware actually would.
+  AlarmClock alarms;
+  alarms.begin();
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
+  radio.begin();
+  uint16_t startFreq = radio.frequency10kHz();
+  Adafruit_ST7789 tft(0, 0, 0);
+  TimezoneStore timezone;
+  timezone.begin();
+  TimeFormatStore timeFormat;
+  timeFormat.begin();
+  MenuSystem menu(tft, alarms, radio, nullptr, nullptr, timezone, timeFormat);
+  menu.begin();
+
+  tap(Pins::MenuDown, menu);    // Home cursor: Alarms(0) -> Radio(1)
+  tap(Pins::MenuSelect, menu);  // enter Radio screen
+
+  SI4735::setSimulatedRssi(0);
+  SI4735::setSimulatedSnr(0);
+  uint16_t target = startFreq + 6 * RadioConfig::FmStep;
+  SI4735::setSimulatedSignalAt(target, 50, 20);
+
+  native_fake_digital_state(Pins::MenuUp) = HIGH;  // press (active-high)
+  for (int i = 0; i < 120; i++) {  // 120 x 10ms = 1200ms of finely-polled holding
+    advance(10);
+    menu.update(kNow, "");
+  }
+  native_fake_digital_state(Pins::MenuUp) = LOW;  // release
+  advance(50);
+  menu.update(kNow, "");
+
+  TEST_ASSERT_EQUAL(target, radio.frequency10kHz());
+}
+
+void test_radio_screen_refreshes_signal_periodically_without_a_button_press() {
+  AlarmClock alarms;
+  alarms.begin();
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
+  radio.begin();
+  Adafruit_ST7789 tft(0, 0, 0);
+  TimezoneStore timezone;
+  timezone.begin();
+  TimeFormatStore timeFormat;
+  timeFormat.begin();
+  MenuSystem menu(tft, alarms, radio, nullptr, nullptr, timezone, timeFormat);
+  menu.begin();
+
+  tap(Pins::MenuDown, menu);    // Home cursor: Alarms(0) -> Radio(1)
+  tap(Pins::MenuSelect, menu);  // enter Radio screen -- already queries once on entry
+
+  int callsAfterEntry = SI4735::driverCallCount();
+  advance(600);  // past the 500ms signal-refresh interval -- no button touched
+  menu.update(kNow, "");
+
+  // rssi()/snr() are the only driver calls renderRadio() makes on its own,
+  // so an increase here with no button press is exactly the periodic
+  // refresh timer firing, not a stale cached value.
+  TEST_ASSERT_TRUE(SI4735::driverCallCount() > callsAfterEntry);
+}
+
+void test_radio_screen_holding_up_under_the_long_press_threshold_does_not_repeat_step() {
+  AlarmClock alarms;
+  alarms.begin();
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
+  radio.begin();
+  uint16_t startFreq = radio.frequency10kHz();
+  Adafruit_ST7789 tft(0, 0, 0);
+  TimezoneStore timezone;
+  timezone.begin();
+  TimeFormatStore timeFormat;
+  timeFormat.begin();
+  MenuSystem menu(tft, alarms, radio, nullptr, nullptr, timezone, timeFormat);
+  menu.begin();
+
+  tap(Pins::MenuDown, menu);    // Home cursor: Alarms(0) -> Radio(1)
+  tap(Pins::MenuSelect, menu);  // enter Radio screen
+
+  // Press and hold Up for 750ms total (under the 1000ms long-press
+  // threshold), ticking at the same cadence DebouncedButton's auto-repeat
+  // uses (450ms initial delay, then every 150ms) -- before this fix, each
+  // of these later ticks would have auto-repeated another step.
+  native_fake_digital_state(Pins::MenuUp) = HIGH;  // press (active-high)
+  advance(50);
+  menu.update(kNow, "");  // registers the press -- one immediate step
+  advance(500);
+  menu.update(kNow, "");  // used to auto-repeat a step here
+  advance(200);
+  menu.update(kNow, "");  // and again here
+  native_fake_digital_state(Pins::MenuUp) = LOW;  // release, still well under 1000ms
+  advance(50);
+  menu.update(kNow, "");
+
+  TEST_ASSERT_EQUAL(startFreq + RadioConfig::FmStep, radio.frequency10kHz());
 }
 
 void test_ringing_alarm_short_press_snoozes() {
@@ -610,6 +762,10 @@ int main(int argc, char **argv) {
   RUN_TEST(test_holding_through_a_long_press_screen_change_does_not_cascade_further);
   RUN_TEST(test_radio_screen_tune_up_and_mute);
   RUN_TEST(test_radio_screen_does_nothing_when_no_radio_is_present);
+  RUN_TEST(test_radio_screen_long_hold_seeks_instead_of_repeatedly_stepping);
+  RUN_TEST(test_radio_screen_long_hold_fires_seek_even_off_the_repeat_schedule);
+  RUN_TEST(test_radio_screen_refreshes_signal_periodically_without_a_button_press);
+  RUN_TEST(test_radio_screen_holding_up_under_the_long_press_threshold_does_not_repeat_step);
   RUN_TEST(test_ringing_alarm_short_press_snoozes);
   RUN_TEST(test_ringing_alarm_long_press_dismisses);
   RUN_TEST(test_set_time_saves_the_new_hour_and_minute);

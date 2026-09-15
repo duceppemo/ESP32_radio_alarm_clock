@@ -49,8 +49,9 @@ void test_implausibly_high_percent_is_treated_as_disconnected() {
   battery.begin();
   TEST_ASSERT_TRUE(battery.available());
 
-  Adafruit_MAX17048::setSimulatedVoltage(4.137f);
-  Adafruit_MAX17048::setSimulatedPercent(103.0f);
+  // Real no-battery reading, measured on hardware -- see BatteryMonitor.cpp.
+  Adafruit_MAX17048::setSimulatedVoltage(4.15f);
+  Adafruit_MAX17048::setSimulatedPercent(104.6f);
 
   TEST_ASSERT_FALSE(battery.available());
   TEST_ASSERT_EQUAL_FLOAT(0.0f, battery.voltage());
@@ -70,6 +71,39 @@ void test_real_battery_reading_stays_available() {
 
   TEST_ASSERT_TRUE(battery.available());
   TEST_ASSERT_EQUAL_FLOAT(79.8f, battery.percent());
+}
+
+// Regression guard: a real, fully-charged battery overshoots 100% (see
+// BatteryMonitor.cpp) and was being misread as disconnected before the
+// threshold got recalibrated against this exact measured reading.
+void test_fully_charged_real_battery_stays_available() {
+  BatteryMonitor battery;
+  battery.begin();
+
+  Adafruit_MAX17048::setSimulatedVoltage(4.195f);
+  Adafruit_MAX17048::setSimulatedPercent(101.6f);
+
+  TEST_ASSERT_TRUE(battery.available());
+  // percent() clamps to 100 for display -- available() is what needed the
+  // real 101.6 to tell this apart from no battery at all (see
+  // test_displayed_percent_never_exceeds_100_even_when_the_gauge_overshoots).
+  TEST_ASSERT_EQUAL_FLOAT(100.0f, battery.percent());
+}
+
+// The gauge's raw overshoot is exactly what available() needs (see above),
+// but nothing showing this to a person should ever display over 100%.
+void test_displayed_percent_never_exceeds_100_even_when_the_gauge_overshoots() {
+  BatteryMonitor battery;
+  battery.begin();
+
+  Adafruit_MAX17048::setSimulatedPercent(101.6f);
+  TEST_ASSERT_EQUAL_FLOAT(100.0f, battery.percent());
+
+  Adafruit_MAX17048::setSimulatedPercent(100.0f);
+  TEST_ASSERT_EQUAL_FLOAT(100.0f, battery.percent());
+
+  Adafruit_MAX17048::setSimulatedPercent(99.0f);
+  TEST_ASSERT_EQUAL_FLOAT(99.0f, battery.percent());  // untouched below 100
 }
 
 void test_is_low_reflects_the_configured_threshold() {
@@ -95,6 +129,8 @@ int main(int argc, char **argv) {
   RUN_TEST(test_begin_success_reports_real_readings);
   RUN_TEST(test_implausibly_high_percent_is_treated_as_disconnected);
   RUN_TEST(test_real_battery_reading_stays_available);
+  RUN_TEST(test_fully_charged_real_battery_stays_available);
+  RUN_TEST(test_displayed_percent_never_exceeds_100_even_when_the_gauge_overshoots);
   RUN_TEST(test_is_low_reflects_the_configured_threshold);
   return UNITY_END();
 }

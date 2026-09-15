@@ -51,6 +51,7 @@ constexpr uint8_t TX = 7;
 constexpr uint8_t OUTPUT = 1;
 constexpr uint8_t INPUT = 0;
 constexpr uint8_t INPUT_PULLUP = 2;
+constexpr uint8_t INPUT_PULLDOWN = 3;
 constexpr uint8_t LOW = 0;
 constexpr uint8_t HIGH = 1;
 

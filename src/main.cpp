@@ -245,11 +245,10 @@ void loop() {
 
   radioTuner.update();  // expires the sleep timer
 
-  // RDS Clock Time fallback: only worth attempting (and only actually
-  // applied) while there's no reliable NTP time yet -- see
-  // RadioTuner::updateRdsSync()/WebDashboard::hasSyncedFromNtpSuccessfully()
-  // for the full design (passive harvesting is free and always runs;
-  // needsFallback only gates the muted background retune).
+  // RDS Clock Time fallback: currently disabled -- see
+  // RadioTuner::updateRdsSync()'s definition for why. This call and the
+  // gating below are kept (updateRdsSync() itself short-circuits) so
+  // re-enabling it later is a one-line change.
   bool needsRdsFallback = !dashboard.isOnline() || !dashboard.hasSyncedFromNtpSuccessfully();
   radioTuner.updateRdsSync(needsRdsFallback);
   if (rtcOk && needsRdsFallback && radioTuner.consumeRdsTimeSync()) {

@@ -99,16 +99,21 @@ class SI4735 {
     driverCallCount()++;
   }
 
-  void seekStationUp() {
-    seekUpCalls++;
-    driverCallCount()++;
+  // Real library: getCurrentRSSI()/getCurrentSNR() just return fields this
+  // call populates. The fake tracks it as a real driver call so a test can
+  // confirm RadioTuner::rssi()/snr() actually query fresh, rather than
+  // trusting a value nothing ever populated -- but the values themselves
+  // come from simulatedRssi()/simulatedSnr() (or the frequency-specific
+  // override below), not anything this call itself sets.
+  void getCurrentReceivedSignalQuality() { driverCallCount()++; }
+  uint8_t getCurrentRSSI() {
+    int i = findOverride(frequency);
+    return i >= 0 ? overrideRssi()[i] : simulatedRssi();
   }
-  void seekStationDown() {
-    seekDownCalls++;
-    driverCallCount()++;
+  uint8_t getCurrentSNR() {
+    int i = findOverride(frequency);
+    return i >= 0 ? overrideSnr()[i] : simulatedSnr();
   }
-
-  uint8_t getCurrentRSSI() { return simulatedRssi(); }
   void setAudioMute(bool m) {
     muted = m;
     driverCallCount()++;
@@ -116,11 +121,34 @@ class SI4735 {
 
   static void setSimulatedRssi(uint8_t value) { simulatedRssi() = value; }
   static void resetSimulatedRssi() { simulatedRssi() = 50; }  // default: "good signal"
+  static void setSimulatedSnr(uint8_t value) { simulatedSnr() = value; }
+  static void resetSimulatedSnr() { simulatedSnr() = 20; }  // default: "clean signal"
+
+  // Simulates specific frequencies reading differently from
+  // simulatedRssi()/simulatedSnr() everywhere else -- e.g. a station's
+  // whole response curve (a weaker shoulder next to its actual peak), for
+  // testing RadioTuner's software seek (see seekUp()/seekDown()/
+  // climbToLocalPeak()), which settles at each candidate frequency in turn
+  // and reads whatever's "there". Up to kMaxOverrides points at once;
+  // setting the same frequency again replaces its values.
+  static constexpr int kMaxOverrides = 8;
+  static void setSimulatedSignalAt(uint16_t freq10kHz, uint8_t rssiValue, uint8_t snrValue) {
+    int i = findOverride(freq10kHz);
+    if (i < 0) {
+      if (overrideCount() >= kMaxOverrides) return;
+      i = overrideCount()++;
+      overrideFreq()[i] = freq10kHz;
+    }
+    overrideRssi()[i] = rssiValue;
+    overrideSnr()[i] = snrValue;
+  }
+  static void clearSimulatedSignalAt() { overrideCount() = 0; }
 
   // Process-wide count of calls into any driver method that would talk to
-  // real hardware (setFrequency/seekStationUp/seekStationDown/setVolume/
-  // setAudioMute) -- lets a test confirm a guarded RadioTuner method never
-  // reached the driver at all, not just that it didn't crash.
+  // real hardware (setFrequency/setVolume/setAudioMute/
+  // getCurrentReceivedSignalQuality) -- lets a test confirm a guarded
+  // RadioTuner method never reached the driver at all, not just that it
+  // didn't crash.
   static int &driverCallCount() {
     static int v = 0;
     return v;
@@ -131,14 +159,16 @@ class SI4735 {
   uint16_t frequency = 0;
   uint8_t volume = 0;
   bool muted = false;
-  int seekUpCalls = 0;
-  int seekDownCalls = 0;
   bool rdsEnabled = false;
   int rdsQueryCalls = 0;
 
  private:
   static uint8_t &simulatedRssi() {
     static uint8_t v = 50;
+    return v;
+  }
+  static uint8_t &simulatedSnr() {
+    static uint8_t v = 20;
     return v;
   }
   static bool &simulatedPresent() {
@@ -160,6 +190,29 @@ class SI4735 {
   static uint16_t &lastFmStep() {
     static uint16_t v = 0;
     return v;
+  }
+  static int &overrideCount() {
+    static int v = 0;
+    return v;
+  }
+  static uint16_t *overrideFreq() {
+    static uint16_t v[kMaxOverrides];
+    return v;
+  }
+  static uint8_t *overrideRssi() {
+    static uint8_t v[kMaxOverrides];
+    return v;
+  }
+  static uint8_t *overrideSnr() {
+    static uint8_t v[kMaxOverrides];
+    return v;
+  }
+  // -1 if freq has no override set.
+  static int findOverride(uint16_t freq) {
+    for (int i = 0; i < overrideCount(); i++) {
+      if (overrideFreq()[i] == freq) return i;
+    }
+    return -1;
   }
   static bool &simulatedRdsPresent() {
     static bool v = false;

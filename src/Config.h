@@ -3,10 +3,10 @@
 #include <Arduino.h>
 
 // ---------------------------------------------------------------------------
-// Pin assignments off the shared I2C bus. None of this hardware is wired up
-// yet (see docs/wiring-diagram.html) -- these are placeholders on currently
-// free broken-out pins of the ESP32-S3 Reverse TFT Feather and MUST be
-// confirmed once the panel controls and radio module are actually wired.
+// Pin assignments off the shared I2C bus (see docs/wiring-diagram.html).
+// Confirmed on real hardware: RadioReset, SnoozeButton, VolumeUp, VolumeDown
+// (all wired and working as assigned below). Buzzer is still an unconfirmed
+// placeholder -- not yet wired/tested.
 //
 // Two independent, non-overlapping audio paths:
 //   - FM/AM playback: SI4730 (analog audio out) -> amp -> speaker. Pure
@@ -20,9 +20,11 @@ constexpr uint8_t RadioReset = A0;
 constexpr uint8_t SnoozeButton = A1;
 constexpr uint8_t VolumeUp = A2;
 constexpr uint8_t VolumeDown = A3;
-constexpr uint8_t Buzzer = A5;
+constexpr uint8_t Buzzer = A5;  // unconfirmed -- not yet wired/tested
 
-// Onboard menu buttons (Adafruit ESP32-S3 Reverse TFT Feather pinout).
+// Onboard menu buttons (Adafruit ESP32-S3 Reverse TFT Feather pinout) --
+// confirmed working on real hardware, including D1/D2's INPUT_PULLDOWN
+// requirement (see MenuSystem::begin()).
 constexpr uint8_t MenuSelect = 0;  // D0, shares the boot-strap pin
 constexpr uint8_t MenuUp = 1;      // D1
 constexpr uint8_t MenuDown = 2;    // D2
@@ -57,6 +59,33 @@ constexpr uint16_t FmBandStart = 8750;   // 87.50 MHz, in 10 kHz units
 constexpr uint16_t FmBandEnd = 10800;    // 108.00 MHz
 constexpr uint16_t FmStep = 10;          // 100 kHz steps
 constexpr uint16_t FmDefaultFreq = 9750; // 97.50 MHz
+
+// Minimum RSSI (dBuV) / SNR (dB) RadioTuner's own software seek (see
+// seekUp()/seekDown()) requires before stopping on a frequency. Measured on
+// real hardware, with the Radio screen's live Sig/SNR readout, across a
+// dozen stations subjectively "decent quality": Sig ranged 16-29, SNR
+// ranged 3-10. RSSI=5 is already well below that Sig floor (not the
+// bottleneck); SNR=3 matches the measured floor exactly. Still worth
+// revisiting if reception changes (different antenna, different region's
+// stations, weaker basement-type reception).
+//
+// This used to be the SI4735's own hardware SEEK_START command (with these
+// same two values pushed to it via setSeekFmRssiThreshold()/
+// setSeekFmSNRThreshold()), but that measures signal quality mid-sweep,
+// while racing across candidate frequencies -- confirmed live to skip real,
+// comfortably-clearing-threshold stations (23 RSSI / 12 SNR once settled)
+// in marginal reception, where a fast in-sweep reading is less reliable
+// than a settled one. RadioTuner now steps through the band itself,
+// settling briefly at each candidate before reading -- slower (a few
+// seconds per seek) but consistent with whatever the Radio screen's Sig/SNR
+// line already shows for that frequency.
+constexpr uint16_t SeekRssiThreshold = 5;
+constexpr uint16_t SeekSnrThreshold = 3;
+// How long to let RSSI/SNR settle after tuning to each candidate frequency
+// during a software seek, before trusting the reading -- a guess (common
+// in community SI4735 seek implementations), not measured against real
+// AGC/AFC settle time on this specific board.
+constexpr uint16_t SeekSettleMs = 30;
 constexpr uint8_t DefaultVolume = 30;    // SI4735 volume range is 0-63
 constexpr uint8_t MaxPresets = 6;
 constexpr uint16_t MaxSleepTimerMinutes = 120;
@@ -112,9 +141,12 @@ constexpr float BrightLuxThreshold = 200.0f;
 
 // TFT backlight is PWM-driven (0-255); never fully off so the clock stays
 // readable in a dark room. 7-segment brightness is the HT16K33's native
-// 0-15 range.
+// 0-15 range -- 0 is its dimmest setting (still lit, just at minimum duty
+// cycle), used here as the floor since the 7-segment's own LEDs are bright
+// enough at even the lowest setting to want going as dim as the chip allows
+// in a dark room, unlike the TFT backlight above.
 constexpr uint8_t MinTftBacklight = 20;
 constexpr uint8_t MaxTftBacklight = 255;
-constexpr uint8_t MinSevenSegmentBrightness = 1;
+constexpr uint8_t MinSevenSegmentBrightness = 0;
 constexpr uint8_t MaxSevenSegmentBrightness = 15;
 }  // namespace DisplayConfig

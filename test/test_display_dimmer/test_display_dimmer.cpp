@@ -8,7 +8,7 @@ void tearDown() {}
 void test_at_or_below_dim_threshold_uses_minimum_brightness() {
   TEST_ASSERT_EQUAL(20, DisplayDimmer::tftBacklightFor(0.0f));
   TEST_ASSERT_EQUAL(20, DisplayDimmer::tftBacklightFor(5.0f));
-  TEST_ASSERT_EQUAL(1, DisplayDimmer::sevenSegmentBrightnessFor(5.0f));
+  TEST_ASSERT_EQUAL(0, DisplayDimmer::sevenSegmentBrightnessFor(5.0f));
 }
 
 void test_at_or_above_bright_threshold_uses_maximum_brightness() {
@@ -19,7 +19,7 @@ void test_at_or_above_bright_threshold_uses_maximum_brightness() {
 
 void test_negative_lux_clamps_to_minimum() {
   TEST_ASSERT_EQUAL(20, DisplayDimmer::tftBacklightFor(-10.0f));
-  TEST_ASSERT_EQUAL(1, DisplayDimmer::sevenSegmentBrightnessFor(-10.0f));
+  TEST_ASSERT_EQUAL(0, DisplayDimmer::sevenSegmentBrightnessFor(-10.0f));
 }
 
 void test_midpoint_lux_interpolates_halfway() {

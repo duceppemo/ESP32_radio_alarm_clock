@@ -1,18 +1,25 @@
 #include "BatteryMonitor.h"
 
 namespace {
-// Measured on real hardware (both readings taken a couple seconds after
-// boot, well past any power-on transient):
-//   battery attached:  voltage 4.021V, percent 79.8%
-//   no battery, USB only: voltage 4.137V, percent 103.0%
+// Measured on real hardware:
+//   battery attached, partial charge: voltage 4.021V, percent 79.8%
+//   battery attached, fully charged:  voltage 4.19-4.20V (stable),
+//                                      percent 101.6% (stable)
+//   no battery, USB only:             voltage 4.10-4.19V (noisy, jumping
+//                                      ~50-80mV between readings a second
+//                                      apart -- a floating sense node has
+//                                      nothing smoothing it, unlike a real
+//                                      cell), percent 104.5-104.8%
 // percent() is a 0-100 state-of-charge estimate, so anything meaningfully
-// over 100% is impossible for a real attached cell -- 103.0% vs. 79.8% is
-// a wide, clean margin. (Voltage alone isn't reliable here: a genuinely
-// full battery can legitimately approach the no-battery case's ~4.14V, so
-// this deliberately doesn't gate on voltage.) The threshold leaves
-// headroom above 100 for the small overshoot the MAX17048 is documented
-// to sometimes show right after a real cell finishes charging.
-constexpr float kMaxPlausiblePercent = 101.0f;
+// over 100% is impossible for a real attached cell -- but a fully charged
+// real cell can overshoot 100% by a couple of points right after finishing
+// charging (per the first pair above), so the cutoff needs headroom for
+// that without also accepting the no-battery case. 103.0 sits in the
+// middle of that measured gap (101.6 vs. 104.5+), the widest margin
+// available from a single percent() cutoff. (Voltage alone still isn't
+// reliable -- the no-battery range overlaps the low end of what a real
+// full battery can read -- so this deliberately doesn't gate on voltage.)
+constexpr float kMaxPlausiblePercent = 103.0f;
 }  // namespace
 
 // NOTE: a battery plugged/unplugged after boot is NOT detected -- only the
@@ -49,7 +56,11 @@ float BatteryMonitor::voltage() {
 
 float BatteryMonitor::percent() {
   if (!available()) return 0.0f;
-  return gauge_.cellPercent();
+  // The raw gauge estimate can overshoot 100 right after a full charge
+  // (see kMaxPlausiblePercent's comment) -- available() needs that real
+  // overshoot to tell a genuine battery apart from no battery at all, but
+  // nothing displaying this to a person should ever show more than 100%.
+  return min(gauge_.cellPercent(), 100.0f);
 }
 
 bool BatteryMonitor::isLow() {

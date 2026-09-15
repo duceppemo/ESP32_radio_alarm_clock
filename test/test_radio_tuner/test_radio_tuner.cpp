@@ -8,9 +8,11 @@
 void setUp() {
   Preferences::resetAll();
   SI4735::resetSimulatedRssi();
+  SI4735::resetSimulatedSnr();
   SI4735::resetSimulatedPresent();
   SI4735::resetDriverCallCount();
   SI4735::clearSimulatedRdsDateTime();
+  SI4735::clearSimulatedSignalAt();
 }
 void tearDown() {}
 
@@ -33,6 +35,22 @@ void test_begin_reports_unavailable_when_no_chip_responds() {
   TEST_ASSERT_FALSE(radio.available());
 }
 
+void test_rssi_queries_fresh_signal_quality_each_call() {
+  // Regression guard: getCurrentRSSI() alone just returns a cached field --
+  // rssi() must also call getCurrentReceivedSignalQuality() to actually
+  // populate it (this is why the Radio screen's "Sig" line always read 0).
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
+  radio.begin();
+
+  int callsBefore = SI4735::driverCallCount();
+  radio.rssi();
+  radio.rssi();
+
+  TEST_ASSERT_EQUAL(2, SI4735::driverCallCount() - callsBefore);
+}
+
 void test_tune_clamps_to_fm_band_bounds() {
   RegionStore region;
   region.begin();
@@ -44,6 +62,194 @@ void test_tune_clamps_to_fm_band_bounds() {
 
   radio.tune(65000);
   TEST_ASSERT_EQUAL(RadioConfig::FmBandEnd, radio.frequency10kHz());
+}
+
+void test_step_up_wraps_from_band_end_to_band_start() {
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
+  radio.begin();
+
+  radio.tune(RadioConfig::FmBandEnd);
+  radio.stepUp();
+
+  TEST_ASSERT_EQUAL(RadioConfig::FmBandStart, radio.frequency10kHz());
+}
+
+void test_step_down_wraps_from_band_start_to_band_end() {
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
+  radio.begin();
+
+  radio.tune(RadioConfig::FmBandStart);
+  radio.stepDown();
+
+  TEST_ASSERT_EQUAL(RadioConfig::FmBandEnd, radio.frequency10kHz());
+}
+
+void test_step_up_and_down_move_by_one_fm_step_away_from_the_edges() {
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
+  radio.begin();
+
+  uint16_t mid = (RadioConfig::FmBandStart + RadioConfig::FmBandEnd) / 2;
+  radio.tune(mid);
+
+  radio.stepUp();
+  TEST_ASSERT_EQUAL(mid + RadioConfig::FmStep, radio.frequency10kHz());
+
+  radio.stepDown();
+  radio.stepDown();
+  TEST_ASSERT_EQUAL(mid - RadioConfig::FmStep, radio.frequency10kHz());
+}
+
+void test_step_wraps_within_the_current_regions_band_not_a_fixed_constant() {
+  // Regression guard for the same class of bug as
+  // test_tune_clamps_to_the_current_regions_band_not_a_fixed_constant --
+  // stepping must wrap at Japan's band, not the Americas/Europe one.
+  RegionStore region;
+  region.begin();
+  region.setIndex(2);  // Japan: 76.0-95.0MHz
+  RadioTuner radio(region);
+  radio.begin();
+
+  radio.tune(9500);  // Japan's band top
+  radio.stepUp();
+
+  TEST_ASSERT_EQUAL(7600, radio.frequency10kHz());  // wraps to Japan's band start, not 8750
+}
+
+// --- Software seek (see Config.h's SeekRssiThreshold/SeekSnrThreshold
+// comment for why this isn't the chip's own hardware seek) ---
+
+void test_seek_up_stops_at_the_first_candidate_clearing_both_thresholds() {
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
+  radio.begin();
+  radio.tune(RadioConfig::FmBandStart);
+  SI4735::setSimulatedRssi(0);  // dead air everywhere except...
+  SI4735::setSimulatedSnr(0);
+  uint16_t target = RadioConfig::FmBandStart + 5 * RadioConfig::FmStep;
+  SI4735::setSimulatedSignalAt(target, RadioConfig::SeekRssiThreshold, RadioConfig::SeekSnrThreshold);
+
+  radio.seekUp();
+
+  TEST_ASSERT_EQUAL(target, radio.frequency10kHz());
+}
+
+void test_seek_up_climbs_past_a_shoulder_to_the_stations_actual_peak() {
+  // Regression test modeling a real measured station from a live band
+  // sweep: a shoulder one FmStep before the peak already clears both
+  // thresholds (Sig 24/SNR 8), but the true peak one step further on is
+  // much stronger (Sig 31/SNR 16) -- naively stopping at the shoulder
+  // (confirmed live) lands 0.1MHz short of the station every time.
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
+  radio.begin();
+  radio.tune(RadioConfig::FmBandStart);
+  SI4735::setSimulatedRssi(0);
+  SI4735::setSimulatedSnr(0);
+  uint16_t shoulder = RadioConfig::FmBandStart + 5 * RadioConfig::FmStep;
+  uint16_t peak = shoulder + RadioConfig::FmStep;
+  uint16_t farSide = peak + RadioConfig::FmStep;
+  SI4735::setSimulatedSignalAt(shoulder, 24, 8);
+  SI4735::setSimulatedSignalAt(peak, 31, 16);
+  SI4735::setSimulatedSignalAt(farSide, 22, 6);  // falling off again past the peak
+
+  radio.seekUp();
+
+  TEST_ASSERT_EQUAL(peak, radio.frequency10kHz());
+}
+
+void test_seek_down_climbs_past_a_shoulder_to_the_stations_actual_peak() {
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
+  radio.begin();
+  radio.tune(RadioConfig::FmBandEnd);
+  SI4735::setSimulatedRssi(0);
+  SI4735::setSimulatedSnr(0);
+  uint16_t shoulder = RadioConfig::FmBandEnd - 5 * RadioConfig::FmStep;
+  uint16_t peak = shoulder - RadioConfig::FmStep;
+  uint16_t farSide = peak - RadioConfig::FmStep;
+  SI4735::setSimulatedSignalAt(shoulder, 24, 8);
+  SI4735::setSimulatedSignalAt(peak, 31, 16);
+  SI4735::setSimulatedSignalAt(farSide, 22, 6);
+
+  radio.seekDown();
+
+  TEST_ASSERT_EQUAL(peak, radio.frequency10kHz());
+}
+
+void test_seek_up_wraps_past_band_end_to_find_a_station_before_the_start() {
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
+  radio.begin();
+  // Starting near the top means an unwrapped upward sweep would hit the
+  // band edge long before reaching this target -- confirms it wraps rather
+  // than giving up at 108.0MHz the way the hardware seek used to.
+  radio.tune(RadioConfig::FmBandEnd - RadioConfig::FmStep);
+  SI4735::setSimulatedRssi(0);
+  SI4735::setSimulatedSnr(0);
+  uint16_t target = RadioConfig::FmBandStart + 2 * RadioConfig::FmStep;
+  SI4735::setSimulatedSignalAt(target, 50, 20);
+
+  radio.seekUp();
+
+  TEST_ASSERT_EQUAL(target, radio.frequency10kHz());
+}
+
+void test_seek_down_wraps_past_band_start_to_find_a_station_before_the_end() {
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
+  radio.begin();
+  radio.tune(RadioConfig::FmBandStart + RadioConfig::FmStep);
+  SI4735::setSimulatedRssi(0);
+  SI4735::setSimulatedSnr(0);
+  uint16_t target = RadioConfig::FmBandEnd - 2 * RadioConfig::FmStep;
+  SI4735::setSimulatedSignalAt(target, 50, 20);
+
+  radio.seekDown();
+
+  TEST_ASSERT_EQUAL(target, radio.frequency10kHz());
+}
+
+void test_seek_up_returns_to_the_starting_frequency_when_nothing_clears_threshold() {
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
+  radio.begin();
+  uint16_t start = RadioConfig::FmBandStart + 10 * RadioConfig::FmStep;
+  radio.tune(start);
+  SI4735::setSimulatedRssi(0);  // dead air across the entire band, no exceptions
+  SI4735::setSimulatedSnr(0);
+
+  radio.seekUp();
+
+  TEST_ASSERT_EQUAL(start, radio.frequency10kHz());
+}
+
+void test_seek_up_requires_both_rssi_and_snr_to_clear_their_thresholds() {
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
+  radio.begin();
+  radio.tune(RadioConfig::FmBandStart);
+  SI4735::setSimulatedRssi(0);
+  SI4735::setSimulatedSnr(0);
+  // Good RSSI but failing SNR, one step up -- must not stop here.
+  uint16_t badTarget = RadioConfig::FmBandStart + RadioConfig::FmStep;
+  SI4735::setSimulatedSignalAt(badTarget, 50, 0);
+
+  radio.seekUp();
+
+  TEST_ASSERT_NOT_EQUAL(badTarget, radio.frequency10kHz());
 }
 
 void test_set_volume_clamps_to_63() {
@@ -226,6 +432,7 @@ void test_nothing_touches_the_driver_when_radio_is_unavailable() {
 
   TEST_ASSERT_EQUAL(0, radio.frequency10kHz());
   TEST_ASSERT_EQUAL(0, radio.rssi());
+  TEST_ASSERT_EQUAL(0, radio.snr());
 
   radio.tune(9500);
   radio.seekUp();
@@ -251,6 +458,16 @@ void test_rssi_reflects_simulated_signal() {
 
   SI4735::setSimulatedRssi(3);
   TEST_ASSERT_EQUAL(3, radio.rssi());
+}
+
+void test_snr_reflects_simulated_signal() {
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
+  radio.begin();
+
+  SI4735::setSimulatedSnr(7);
+  TEST_ASSERT_EQUAL(7, radio.snr());
 }
 
 // --- Region ---
@@ -312,27 +529,29 @@ void test_tune_clamps_to_the_current_regions_band_not_a_fixed_constant() {
 }
 
 // --- RDS time sync ---
+//
+// updateRdsSync() is currently disabled (short-circuits before touching the
+// driver at all) -- see its definition in RadioTuner.cpp for why: the
+// PU2CLR SI4735 library's getRdsStatus() retries forever with no timeout on
+// an ERR status, which real FM reception (a weak signal or a non-RDS
+// station) triggers easily, and this was confirmed to hang the whole
+// device. These tests now cover that it stays inert rather than covering
+// the (currently unreachable) harvesting logic itself.
 
-void test_passive_rds_harvest_while_unmuted_does_not_need_the_fallback_flag() {
+void test_rds_sync_is_disabled_and_never_reports_a_time() {
   RegionStore region;
   region.begin();
   RadioTuner radio(region);
   radio.begin();
-  radio.setMuted(false);  // actively "listening"
+  radio.setMuted(false);  // actively "listening" -- would have been harvested for free
 
   SI4735::setSimulatedRdsDateTime(2026, 3, 15, 7, 42);
-  radio.updateRdsSync(/*needsFallback=*/false);  // NTP is fine -- still harvests for free
+  radio.updateRdsSync(/*needsFallback=*/false);
 
-  TEST_ASSERT_TRUE(radio.consumeRdsTimeSync());
-  DateTime t = radio.rdsTime();
-  TEST_ASSERT_EQUAL(2026, t.year());
-  TEST_ASSERT_EQUAL(3, t.month());
-  TEST_ASSERT_EQUAL(15, t.day());
-  TEST_ASSERT_EQUAL(7, t.hour());
-  TEST_ASSERT_EQUAL(42, t.minute());
+  TEST_ASSERT_FALSE(radio.consumeRdsTimeSync());
 }
 
-void test_consume_rds_time_sync_is_one_shot() {
+void test_consume_rds_time_sync_has_nothing_to_consume() {
   RegionStore region;
   region.begin();
   RadioTuner radio(region);
@@ -342,8 +561,8 @@ void test_consume_rds_time_sync_is_one_shot() {
   SI4735::setSimulatedRdsDateTime(2026, 3, 15, 7, 42);
   radio.updateRdsSync(false);
 
-  TEST_ASSERT_TRUE(radio.consumeRdsTimeSync());
-  TEST_ASSERT_FALSE(radio.consumeRdsTimeSync());  // already consumed
+  TEST_ASSERT_FALSE(radio.consumeRdsTimeSync());
+  TEST_ASSERT_FALSE(radio.consumeRdsTimeSync());  // still nothing, repeated calls are harmless
 }
 
 void test_implausible_rds_year_is_rejected() {
@@ -359,45 +578,30 @@ void test_implausible_rds_year_is_rejected() {
   TEST_ASSERT_FALSE(radio.consumeRdsTimeSync());
 }
 
-void test_fallback_retune_only_starts_while_muted() {
+void test_disabled_rds_sync_never_retunes_even_while_muted_and_needing_fallback() {
   RegionStore region;
   region.begin();
   RadioTuner radio(region);
   radio.begin();
-  radio.setMuted(false);  // actively in use
+  radio.setMuted(true);
+
+  int callsAfterMuting = SI4735::driverCallCount();  // setMuted() itself is one real driver call
 
   native_fake_millis_value() = 1000;
-  radio.updateRdsSync(/*needsFallback=*/true);
+  radio.updateRdsSync(/*needsFallback=*/true);  // would have started a background retune attempt
 
-  // Still unmuted -- no covert retune should have happened (setFrequency()
-  // from tune()/begin() itself already ran, so this checks it didn't climb
-  // further from a background attempt).
-  int callsAfterUnmutedTick = SI4735::driverCallCount();
-
-  radio.setMuted(true);
-  native_fake_millis_value() = 2000;
-  radio.updateRdsSync(true);
-
-  TEST_ASSERT_TRUE(SI4735::driverCallCount() > callsAfterUnmutedTick);
+  TEST_ASSERT_EQUAL(callsAfterMuting, SI4735::driverCallCount());
 }
 
-void test_real_user_action_cancels_an_in_progress_fallback_attempt() {
+void test_disabled_rds_sync_ignores_a_simulated_ct_frame_even_while_idle() {
   RegionStore region;
   region.begin();
   RadioTuner radio(region);
   radio.begin();
   radio.setMuted(true);
 
-  native_fake_millis_value() = 1000;
-  radio.updateRdsSync(true);  // starts a fallback attempt (first ever -- fires immediately)
-
-  radio.tune(9500);  // user action while an attempt is in flight -- cancels it
-
-  // Still muted and well within the 30-minute retry interval, so no new
-  // attempt starts either -- a CT frame arriving now must not be picked
-  // up, since nothing is actively listening for one anymore.
   SI4735::setSimulatedRdsDateTime(2026, 3, 15, 7, 42);
-  native_fake_millis_value() = 1500;
+  native_fake_millis_value() = 1000;
   radio.updateRdsSync(true);
 
   TEST_ASSERT_FALSE(radio.consumeRdsTimeSync());
@@ -409,7 +613,19 @@ int main(int argc, char **argv) {
   UNITY_BEGIN();
   RUN_TEST(test_begin_reports_availability_when_the_chip_responds);
   RUN_TEST(test_begin_reports_unavailable_when_no_chip_responds);
+  RUN_TEST(test_rssi_queries_fresh_signal_quality_each_call);
   RUN_TEST(test_tune_clamps_to_fm_band_bounds);
+  RUN_TEST(test_step_up_wraps_from_band_end_to_band_start);
+  RUN_TEST(test_step_down_wraps_from_band_start_to_band_end);
+  RUN_TEST(test_step_up_and_down_move_by_one_fm_step_away_from_the_edges);
+  RUN_TEST(test_step_wraps_within_the_current_regions_band_not_a_fixed_constant);
+  RUN_TEST(test_seek_up_stops_at_the_first_candidate_clearing_both_thresholds);
+  RUN_TEST(test_seek_up_climbs_past_a_shoulder_to_the_stations_actual_peak);
+  RUN_TEST(test_seek_down_climbs_past_a_shoulder_to_the_stations_actual_peak);
+  RUN_TEST(test_seek_up_wraps_past_band_end_to_find_a_station_before_the_start);
+  RUN_TEST(test_seek_down_wraps_past_band_start_to_find_a_station_before_the_end);
+  RUN_TEST(test_seek_up_returns_to_the_starting_frequency_when_nothing_clears_threshold);
+  RUN_TEST(test_seek_up_requires_both_rssi_and_snr_to_clear_their_thresholds);
   RUN_TEST(test_set_volume_clamps_to_63);
   RUN_TEST(test_volume_up_and_down_stop_at_bounds);
   RUN_TEST(test_transient_volume_is_not_persisted);
@@ -422,14 +638,15 @@ int main(int argc, char **argv) {
   RUN_TEST(test_set_sleep_timer_to_zero_behaves_like_cancel);
   RUN_TEST(test_nothing_touches_the_driver_when_radio_is_unavailable);
   RUN_TEST(test_rssi_reflects_simulated_signal);
+  RUN_TEST(test_snr_reflects_simulated_signal);
   RUN_TEST(test_begin_applies_the_current_region_to_the_chip);
   RUN_TEST(test_changing_region_live_reapplies_de_emphasis);
   RUN_TEST(test_apply_region_reclamps_frequency_into_the_new_band);
   RUN_TEST(test_tune_clamps_to_the_current_regions_band_not_a_fixed_constant);
-  RUN_TEST(test_passive_rds_harvest_while_unmuted_does_not_need_the_fallback_flag);
-  RUN_TEST(test_consume_rds_time_sync_is_one_shot);
+  RUN_TEST(test_rds_sync_is_disabled_and_never_reports_a_time);
+  RUN_TEST(test_consume_rds_time_sync_has_nothing_to_consume);
   RUN_TEST(test_implausible_rds_year_is_rejected);
-  RUN_TEST(test_fallback_retune_only_starts_while_muted);
-  RUN_TEST(test_real_user_action_cancels_an_in_progress_fallback_attempt);
+  RUN_TEST(test_disabled_rds_sync_never_retunes_even_while_muted_and_needing_fallback);
+  RUN_TEST(test_disabled_rds_sync_ignores_a_simulated_ct_frame_even_while_idle);
   return UNITY_END();
 }
