@@ -59,10 +59,14 @@ inline void pinMode(uint8_t pin, uint8_t mode) {
   (void)pin;
   (void)mode;
 }
-inline void digitalWrite(uint8_t pin, uint8_t value) {
-  (void)pin;
-  (void)value;
+// Per-pin last-written output state, readable by tests (e.g. RadioTuner's
+// amp-mute GPIO) -- separate array from native_fake_digital_state() above,
+// which is the *input* side tests drive to simulate a button press.
+inline uint8_t &native_fake_digital_write_value(uint8_t pin) {
+  static uint8_t values[16] = {};
+  return values[pin];
 }
+inline void digitalWrite(uint8_t pin, uint8_t value) { native_fake_digital_write_value(pin) = value; }
 inline void tone(uint8_t pin, unsigned int frequency) {
   (void)pin;
   (void)frequency;

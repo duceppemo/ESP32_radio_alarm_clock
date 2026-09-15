@@ -17,6 +17,9 @@ void test_defaults_to_americas() {
   TEST_ASSERT_EQUAL(2, region.current().fmDeEmphasis);
   TEST_ASSERT_EQUAL(8750, region.current().fmBandStart);
   TEST_ASSERT_EQUAL(10800, region.current().fmBandEnd);
+  // 200kHz spacing -- real North American channels land on odd tenths of a
+  // MHz only (88.1, 88.3, ...), unlike the rest of the world below.
+  TEST_ASSERT_EQUAL(20, region.current().fmStep);
 }
 
 void test_set_index_switches_region() {
@@ -26,6 +29,7 @@ void test_set_index_switches_region() {
   region.setIndex(1);
   TEST_ASSERT_EQUAL_STRING("Europe / Rest of World", region.current().label);
   TEST_ASSERT_EQUAL(1, region.current().fmDeEmphasis);
+  TEST_ASSERT_EQUAL(10, region.current().fmStep);  // 100kHz -- any tenth is potentially valid
 
   region.setIndex(2);
   TEST_ASSERT_EQUAL_STRING("Japan", region.current().label);
@@ -34,6 +38,7 @@ void test_set_index_switches_region() {
   // track rather than a fixed constant.
   TEST_ASSERT_EQUAL(7600, region.current().fmBandStart);
   TEST_ASSERT_EQUAL(9500, region.current().fmBandEnd);
+  TEST_ASSERT_EQUAL(10, region.current().fmStep);
 }
 
 void test_set_index_out_of_range_falls_back_to_americas() {

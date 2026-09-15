@@ -33,6 +33,11 @@ void tearDown() {}
 namespace {
 const DateTime kNow(2026, 8, 25, 7, 0, 0);
 
+// Americas (RegionStore's default, index 0) has real-world 200kHz channel
+// spacing -- see test_radio_tuner.cpp's own copy of this constant for why
+// it's hardcoded rather than read back from RegionStore::entry(0).fmStep.
+constexpr uint16_t kFmStep = 20;
+
 void advance(uint32_t deltaMs) { native_fake_millis_value() += deltaMs; }
 
 // MenuSelect (D0) is active-low (idle HIGH); MenuUp/MenuDown (D1/D2) are
@@ -223,7 +228,7 @@ void test_radio_screen_tune_up_and_mute() {
   tap(Pins::MenuSelect, menu);  // enter Radio screen
   tap(Pins::MenuUp, menu);      // tune up by one step
 
-  TEST_ASSERT_EQUAL(startFreq + RadioConfig::FmStep, radio.frequency10kHz());
+  TEST_ASSERT_EQUAL(startFreq + kFmStep, radio.frequency10kHz());
   TEST_ASSERT_FALSE(radio.muted());
 
   tap(Pins::MenuSelect, menu);  // toggle mute
@@ -283,7 +288,7 @@ void test_radio_screen_long_hold_seeks_instead_of_repeatedly_stepping() {
   // couldn't land here by coincidence.
   SI4735::setSimulatedRssi(0);
   SI4735::setSimulatedSnr(0);
-  uint16_t target = startFreq + 6 * RadioConfig::FmStep;
+  uint16_t target = startFreq + 6 * kFmStep;
   SI4735::setSimulatedSignalAt(target, 50, 20);
 
   hold(Pins::MenuUp, menu);  // press fires one immediate step, then the long hold crosses into seek
@@ -328,7 +333,7 @@ void test_radio_screen_long_hold_fires_seek_even_off_the_repeat_schedule() {
 
   SI4735::setSimulatedRssi(0);
   SI4735::setSimulatedSnr(0);
-  uint16_t target = startFreq + 6 * RadioConfig::FmStep;
+  uint16_t target = startFreq + 6 * kFmStep;
   SI4735::setSimulatedSignalAt(target, 50, 20);
 
   native_fake_digital_state(Pins::MenuUp) = HIGH;  // press (active-high)
@@ -405,7 +410,7 @@ void test_radio_screen_holding_up_under_the_long_press_threshold_does_not_repeat
   advance(50);
   menu.update(kNow, "");
 
-  TEST_ASSERT_EQUAL(startFreq + RadioConfig::FmStep, radio.frequency10kHz());
+  TEST_ASSERT_EQUAL(startFreq + kFmStep, radio.frequency10kHz());
 }
 
 void test_ringing_alarm_short_press_snoozes() {

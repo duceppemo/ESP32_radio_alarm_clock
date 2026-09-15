@@ -16,6 +16,19 @@ void setUp() {
 }
 void tearDown() {}
 
+namespace {
+// Americas (RegionStore's default, index 0) has real-world 200kHz channel
+// spacing -- an independent, hardcoded expectation here (not read back from
+// RegionStore::entry(0).fmStep) so these tests still catch that data
+// changing unexpectedly, the same spirit as the hardcoded band-edge
+// constants already used throughout this file.
+constexpr uint16_t kFmStep = 20;
+// The highest frequency actually reachable on that grid -- RadioTuner.cpp's
+// topOfGrid(): 108.0MHz (RadioConfig::FmBandEnd) itself isn't on-grid once
+// step is 20, so tune()/stepDown()/seekDown() all land/wrap here instead.
+constexpr uint16_t kFmTop = 10790;
+}  // namespace
+
 void test_begin_reports_availability_when_the_chip_responds() {
   RegionStore region;
   region.begin();
@@ -61,7 +74,9 @@ void test_tune_clamps_to_fm_band_bounds() {
   TEST_ASSERT_EQUAL(RadioConfig::FmBandStart, radio.frequency10kHz());
 
   radio.tune(65000);
-  TEST_ASSERT_EQUAL(RadioConfig::FmBandEnd, radio.frequency10kHz());
+  // Clamps to 108.0MHz, then snaps down to the nearest real channel on
+  // Americas' grid, 107.9MHz -- see kFmTop.
+  TEST_ASSERT_EQUAL(kFmTop, radio.frequency10kHz());
 }
 
 void test_step_up_wraps_from_band_end_to_band_start() {
@@ -85,7 +100,9 @@ void test_step_down_wraps_from_band_start_to_band_end() {
   radio.tune(RadioConfig::FmBandStart);
   radio.stepDown();
 
-  TEST_ASSERT_EQUAL(RadioConfig::FmBandEnd, radio.frequency10kHz());
+  // Wraps to the topmost frequency actually on the grid (107.9MHz), not
+  // the band's own 108.0MHz edge -- see kFmTop.
+  TEST_ASSERT_EQUAL(kFmTop, radio.frequency10kHz());
 }
 
 void test_step_up_and_down_move_by_one_fm_step_away_from_the_edges() {
@@ -94,15 +111,42 @@ void test_step_up_and_down_move_by_one_fm_step_away_from_the_edges() {
   RadioTuner radio(region);
   radio.begin();
 
-  uint16_t mid = (RadioConfig::FmBandStart + RadioConfig::FmBandEnd) / 2;
+  uint16_t mid = RadioConfig::FmDefaultFreq;  // 97.50MHz -- already grid-aligned, far from either edge
   radio.tune(mid);
 
   radio.stepUp();
-  TEST_ASSERT_EQUAL(mid + RadioConfig::FmStep, radio.frequency10kHz());
+  TEST_ASSERT_EQUAL(mid + kFmStep, radio.frequency10kHz());
 
   radio.stepDown();
   radio.stepDown();
-  TEST_ASSERT_EQUAL(mid - RadioConfig::FmStep, radio.frequency10kHz());
+  TEST_ASSERT_EQUAL(mid - kFmStep, radio.frequency10kHz());
+}
+
+void test_tune_snaps_to_the_odd_decimal_grid_in_americas_only() {
+  RegionStore region;
+  region.begin();  // Americas (index 0): real 200kHz channel spacing
+  RadioTuner radio(region);
+  radio.begin();
+
+  radio.tune(8800);  // 88.0MHz -- not a real North American channel
+  // Nearest valid Americas channel: 88.1MHz. An "even" tenth under a
+  // 200kHz grid is always exactly halfway between two valid ones --
+  // snapToGrid() breaks that tie by rounding up.
+  TEST_ASSERT_EQUAL(8810, radio.frequency10kHz());
+
+  radio.tune(9430);  // 94.3MHz -- already a real (odd-decimal) channel
+  TEST_ASSERT_EQUAL(9430, radio.frequency10kHz());  // left untouched
+}
+
+void test_tune_does_not_snap_to_odd_decimals_outside_americas() {
+  RegionStore region;
+  region.begin();
+  region.setIndex(1);  // Europe / Rest of World: 100kHz spacing, any tenth valid
+  RadioTuner radio(region);
+  radio.begin();
+
+  radio.tune(8800);  // 88.0MHz -- a perfectly valid European channel
+  TEST_ASSERT_EQUAL(8800, radio.frequency10kHz());  // not snapped to 88.1
 }
 
 void test_step_wraps_within_the_current_regions_band_not_a_fixed_constant() {
@@ -132,7 +176,7 @@ void test_seek_up_stops_at_the_first_candidate_clearing_both_thresholds() {
   radio.tune(RadioConfig::FmBandStart);
   SI4735::setSimulatedRssi(0);  // dead air everywhere except...
   SI4735::setSimulatedSnr(0);
-  uint16_t target = RadioConfig::FmBandStart + 5 * RadioConfig::FmStep;
+  uint16_t target = RadioConfig::FmBandStart + 5 * kFmStep;
   SI4735::setSimulatedSignalAt(target, RadioConfig::SeekRssiThreshold, RadioConfig::SeekSnrThreshold);
 
   radio.seekUp();
@@ -153,9 +197,9 @@ void test_seek_up_climbs_past_a_shoulder_to_the_stations_actual_peak() {
   radio.tune(RadioConfig::FmBandStart);
   SI4735::setSimulatedRssi(0);
   SI4735::setSimulatedSnr(0);
-  uint16_t shoulder = RadioConfig::FmBandStart + 5 * RadioConfig::FmStep;
-  uint16_t peak = shoulder + RadioConfig::FmStep;
-  uint16_t farSide = peak + RadioConfig::FmStep;
+  uint16_t shoulder = RadioConfig::FmBandStart + 5 * kFmStep;
+  uint16_t peak = shoulder + kFmStep;
+  uint16_t farSide = peak + kFmStep;
   SI4735::setSimulatedSignalAt(shoulder, 24, 8);
   SI4735::setSimulatedSignalAt(peak, 31, 16);
   SI4735::setSimulatedSignalAt(farSide, 22, 6);  // falling off again past the peak
@@ -170,12 +214,15 @@ void test_seek_down_climbs_past_a_shoulder_to_the_stations_actual_peak() {
   region.begin();
   RadioTuner radio(region);
   radio.begin();
-  radio.tune(RadioConfig::FmBandEnd);
+  radio.tune(RadioConfig::FmBandEnd);  // snapped down to kFmTop (107.9MHz) by tune()
   SI4735::setSimulatedRssi(0);
   SI4735::setSimulatedSnr(0);
-  uint16_t shoulder = RadioConfig::FmBandEnd - 5 * RadioConfig::FmStep;
-  uint16_t peak = shoulder - RadioConfig::FmStep;
-  uint16_t farSide = peak - RadioConfig::FmStep;
+  // Anchored to kFmTop, not FmBandEnd -- seekDown() below only ever visits
+  // kFmTop, kFmTop-kFmStep, kFmTop-2*kFmStep, ... once it's actually
+  // starting from there.
+  uint16_t shoulder = kFmTop - 5 * kFmStep;
+  uint16_t peak = shoulder - kFmStep;
+  uint16_t farSide = peak - kFmStep;
   SI4735::setSimulatedSignalAt(shoulder, 24, 8);
   SI4735::setSimulatedSignalAt(peak, 31, 16);
   SI4735::setSimulatedSignalAt(farSide, 22, 6);
@@ -193,10 +240,10 @@ void test_seek_up_wraps_past_band_end_to_find_a_station_before_the_start() {
   // Starting near the top means an unwrapped upward sweep would hit the
   // band edge long before reaching this target -- confirms it wraps rather
   // than giving up at 108.0MHz the way the hardware seek used to.
-  radio.tune(RadioConfig::FmBandEnd - RadioConfig::FmStep);
+  radio.tune(kFmTop - kFmStep);
   SI4735::setSimulatedRssi(0);
   SI4735::setSimulatedSnr(0);
-  uint16_t target = RadioConfig::FmBandStart + 2 * RadioConfig::FmStep;
+  uint16_t target = RadioConfig::FmBandStart + 2 * kFmStep;
   SI4735::setSimulatedSignalAt(target, 50, 20);
 
   radio.seekUp();
@@ -209,10 +256,13 @@ void test_seek_down_wraps_past_band_start_to_find_a_station_before_the_end() {
   region.begin();
   RadioTuner radio(region);
   radio.begin();
-  radio.tune(RadioConfig::FmBandStart + RadioConfig::FmStep);
+  radio.tune(RadioConfig::FmBandStart + kFmStep);
   SI4735::setSimulatedRssi(0);
   SI4735::setSimulatedSnr(0);
-  uint16_t target = RadioConfig::FmBandEnd - 2 * RadioConfig::FmStep;
+  // Anchored to kFmTop, not FmBandEnd -- once seekDown() wraps past the
+  // bottom of the band, it lands on kFmTop (the actual top of the grid)
+  // and steps down from there, same as in the shoulder/peak test above.
+  uint16_t target = kFmTop - 2 * kFmStep;
   SI4735::setSimulatedSignalAt(target, 50, 20);
 
   radio.seekDown();
@@ -225,7 +275,7 @@ void test_seek_up_returns_to_the_starting_frequency_when_nothing_clears_threshol
   region.begin();
   RadioTuner radio(region);
   radio.begin();
-  uint16_t start = RadioConfig::FmBandStart + 10 * RadioConfig::FmStep;
+  uint16_t start = RadioConfig::FmBandStart + 10 * kFmStep;
   radio.tune(start);
   SI4735::setSimulatedRssi(0);  // dead air across the entire band, no exceptions
   SI4735::setSimulatedSnr(0);
@@ -244,7 +294,7 @@ void test_seek_up_requires_both_rssi_and_snr_to_clear_their_thresholds() {
   SI4735::setSimulatedRssi(0);
   SI4735::setSimulatedSnr(0);
   // Good RSSI but failing SNR, one step up -- must not stop here.
-  uint16_t badTarget = RadioConfig::FmBandStart + RadioConfig::FmStep;
+  uint16_t badTarget = RadioConfig::FmBandStart + kFmStep;
   SI4735::setSimulatedSignalAt(badTarget, 50, 0);
 
   radio.seekUp();
@@ -295,6 +345,75 @@ void test_transient_volume_is_not_persisted() {
   TEST_ASSERT_EQUAL(40, reloaded.volume());
 }
 
+// --- Amp-mute GPIO (Pins::AmpMute) -- gates an external transistor that
+// shunts the SI4730->amp audio line to ground. Added because even the
+// chip's own hardware mute (RX_HARD_MUTE) leaves an audible noise floor on
+// the audio line that a sensitive amp picks up as static; this GPIO
+// silences the amp itself instead of relying on the tuner's output being
+// truly clean. ---
+
+void test_amp_mute_pin_is_high_when_muted() {
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
+  radio.begin();
+  radio.setVolume(40);
+  radio.setMuted(false);
+  TEST_ASSERT_EQUAL(LOW, native_fake_digital_write_value(Pins::AmpMute));
+
+  radio.setMuted(true);
+  TEST_ASSERT_EQUAL(HIGH, native_fake_digital_write_value(Pins::AmpMute));
+
+  radio.setMuted(false);
+  TEST_ASSERT_EQUAL(LOW, native_fake_digital_write_value(Pins::AmpMute));
+}
+
+void test_amp_mute_pin_is_high_at_zero_volume_even_while_unmuted() {
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
+  radio.begin();
+  radio.setMuted(false);
+
+  radio.setVolume(0);
+  TEST_ASSERT_EQUAL(HIGH, native_fake_digital_write_value(Pins::AmpMute));
+
+  radio.setVolume(1);
+  TEST_ASSERT_EQUAL(LOW, native_fake_digital_write_value(Pins::AmpMute));
+}
+
+void test_amp_mute_pin_reflects_persisted_volume_on_begin() {
+  {
+    RegionStore region;
+    region.begin();
+    RadioTuner radio(region);
+    radio.begin();
+    radio.setVolume(0);  // persisted
+  }
+
+  RegionStore region;
+  region.begin();
+  RadioTuner reloaded(region);
+  reloaded.begin();
+  TEST_ASSERT_EQUAL(HIGH, native_fake_digital_write_value(Pins::AmpMute));
+}
+
+// Regression guard: the amp-mute pin is plain GPIO, not I2C, so it must
+// keep working even when the SI4730 itself never responds -- unlike every
+// other RadioTuner method, which is a no-op without a chip present.
+void test_amp_mute_pin_is_still_driven_when_radio_is_unavailable() {
+  SI4735::setSimulatedPresent(false);
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
+  radio.begin();
+  TEST_ASSERT_FALSE(radio.available());
+  TEST_ASSERT_EQUAL(LOW, native_fake_digital_write_value(Pins::AmpMute));  // default volume is nonzero
+
+  radio.setMuted(true);
+  TEST_ASSERT_EQUAL(HIGH, native_fake_digital_write_value(Pins::AmpMute));
+}
+
 void test_store_and_recall_preset() {
   RegionStore region;
   region.begin();
@@ -314,11 +433,11 @@ void test_recalling_an_unset_preset_does_nothing() {
   region.begin();
   RadioTuner radio(region);
   radio.begin();
-  radio.tune(9500);
+  radio.tune(9510);  // 95.10MHz -- an odd tenth, already valid on Americas' grid
 
   radio.recallPreset(3);  // never stored
 
-  TEST_ASSERT_EQUAL(9500, radio.frequency10kHz());
+  TEST_ASSERT_EQUAL(9510, radio.frequency10kHz());
 }
 
 void test_presets_persist_across_instances() {
@@ -784,6 +903,8 @@ int main(int argc, char **argv) {
   RUN_TEST(test_step_up_wraps_from_band_end_to_band_start);
   RUN_TEST(test_step_down_wraps_from_band_start_to_band_end);
   RUN_TEST(test_step_up_and_down_move_by_one_fm_step_away_from_the_edges);
+  RUN_TEST(test_tune_snaps_to_the_odd_decimal_grid_in_americas_only);
+  RUN_TEST(test_tune_does_not_snap_to_odd_decimals_outside_americas);
   RUN_TEST(test_step_wraps_within_the_current_regions_band_not_a_fixed_constant);
   RUN_TEST(test_seek_up_stops_at_the_first_candidate_clearing_both_thresholds);
   RUN_TEST(test_seek_up_climbs_past_a_shoulder_to_the_stations_actual_peak);
@@ -795,6 +916,10 @@ int main(int argc, char **argv) {
   RUN_TEST(test_set_volume_clamps_to_63);
   RUN_TEST(test_volume_up_and_down_stop_at_bounds);
   RUN_TEST(test_transient_volume_is_not_persisted);
+  RUN_TEST(test_amp_mute_pin_is_high_when_muted);
+  RUN_TEST(test_amp_mute_pin_is_high_at_zero_volume_even_while_unmuted);
+  RUN_TEST(test_amp_mute_pin_reflects_persisted_volume_on_begin);
+  RUN_TEST(test_amp_mute_pin_is_still_driven_when_radio_is_unavailable);
   RUN_TEST(test_store_and_recall_preset);
   RUN_TEST(test_recalling_an_unset_preset_does_nothing);
   RUN_TEST(test_presets_persist_across_instances);

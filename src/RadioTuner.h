@@ -34,12 +34,14 @@ class RadioTuner {
   bool available() const { return available_; }
 
   void tune(uint16_t frequency10kHz);
-  // One FmStep up/down within the current region's band, wrapping around
-  // at the edges (stepping down from the band minimum lands on the
-  // maximum, and vice versa) -- what the Radio screen's held up/down
-  // buttons use. tune() itself still just clamps for absolute sets
-  // (presets, dashboard, region re-clamp), where jumping to the opposite
-  // end of the band would be surprising rather than useful.
+  // One region-step (RegionEntry::fmStep) up/down within the current
+  // region's band, wrapping around at the edges -- stepping down from the
+  // band minimum lands on the topmost frequency actually *on* the grid
+  // (not always the same as the band's own upper bound; see
+  // RadioTuner.cpp's topOfGrid()), and vice versa -- what the Radio
+  // screen's held up/down buttons use. tune() itself still just clamps for
+  // absolute sets (presets, dashboard, region re-clamp), where jumping to
+  // the opposite end of the band would be surprising rather than useful.
   void stepUp();
   void stepDown();
   // Steps through the band itself, one FmStep at a time (wrapping at the
@@ -142,6 +144,14 @@ class RadioTuner {
 
  private:
   void applyVolume(uint8_t volume);
+  // Drives Pins::AmpMute high (shunting the audio line to ground through the
+  // external mute transistor) whenever muted_ or volume_ == 0, low
+  // otherwise -- called from setMuted()/applyVolume() (and once from
+  // begin(), before the chip-availability check, so a missing/unresponsive
+  // chip still leaves the amp muted rather than floating). Independent of
+  // available_ the rest of the way too: this is a plain GPIO, not I2C, so
+  // there's no chip call to skip.
+  void updateAmpMutePin();
   void save();
   void load();
   // Polls the RDS FIFO once; sets rdsTimeReady_ (and cancels an

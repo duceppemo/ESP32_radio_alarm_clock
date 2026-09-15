@@ -5,7 +5,7 @@
 // Bump manually on every release-worthy change (no build-time git/CI wiring
 // for this yet). Shown on the TFT boot screen (main.cpp) so a given unit's
 // running build is identifiable at a glance without a serial connection.
-constexpr const char *FirmwareVersion = "0.1.0";
+constexpr const char *FirmwareVersion = "0.2.0";
 
 // ---------------------------------------------------------------------------
 // Pin assignments off the shared I2C bus (see docs/wiring-diagram.html).
@@ -25,6 +25,13 @@ constexpr uint8_t RadioReset = A0;
 constexpr uint8_t SnoozeButton = A1;
 constexpr uint8_t VolumeUp = A2;
 constexpr uint8_t VolumeDown = A3;
+// Gate transistor shunting the SI4730->amp audio line to ground when high --
+// the amp board has no shutdown pin of its own, and even the SI4730's real
+// hardware mute (RX_HARD_MUTE, see RadioTuner::setMuted()) leaves an audible
+// noise floor on the audio line that a sensitive amp picks up as static.
+// Driven by RadioTuner whenever muted or at volume 0 -- see
+// RadioTuner::updateAmpMutePin().
+constexpr uint8_t AmpMute = A4;
 constexpr uint8_t Buzzer = A5;  // unconfirmed -- not yet wired/tested
 
 // Onboard menu buttons (Adafruit ESP32-S3 Reverse TFT Feather pinout) --
@@ -65,8 +72,11 @@ namespace RadioConfig {
 // reference.
 constexpr uint16_t FmBandStart = 8750;   // 87.50 MHz, in 10 kHz units
 constexpr uint16_t FmBandEnd = 10800;    // 108.00 MHz
-constexpr uint16_t FmStep = 10;          // 100 kHz steps
-constexpr uint16_t FmDefaultFreq = 9750; // 97.50 MHz
+// Tuning grid step is per-region now (RegionEntry::fmStep, see
+// RegionStore.h/.cpp) -- Americas' real channel spacing is 200kHz, landing
+// only on odd tenths of a MHz, unlike the rest of the world's 100kHz grid.
+constexpr uint16_t FmDefaultFreq = 9750; // 97.50 MHz -- an odd tenth, already
+                                          // valid on Americas' grid
 
 // Minimum RSSI (dBuV) / SNR (dB) RadioTuner's own software seek (see
 // seekUp()/seekDown()) requires before stopping on a frequency. Measured on

@@ -12,10 +12,38 @@ constexpr const char *kFreqKey = "freq";
 // exposed by the PU2CLR SI4735 library's public API, so it's redefined
 // here rather than reaching into the library's own private header value.
 constexpr uint8_t kFmRdsStatusCommand = 0x24;
+
+// Rounds freq to the nearest point on the region's channel grid
+// (fmBandStart + k*fmStep), clamped back into the band if rounding would
+// push past its edge. A no-op whenever freq is already on-grid -- true for
+// every region except Americas, whose real 200kHz channel spacing means a
+// manually-entered or old-preset frequency landing on an "even" tenth
+// needs correcting (see RadioTuner::tune()'s own comment for why this
+// isn't optional).
+uint16_t snapToGrid(uint16_t freq, const RegionEntry &r) {
+  uint16_t offset = (freq - r.fmBandStart) % r.fmStep;
+  if (offset == 0) return freq;
+  uint16_t roundedUp = freq + (r.fmStep - offset);
+  bool nearerUp = offset * 2 >= r.fmStep;
+  if (nearerUp && roundedUp <= r.fmBandEnd) return roundedUp;
+  return freq - offset;
+}
+
+// The highest frequency on the region's grid that's still <= fmBandEnd --
+// not necessarily fmBandEnd itself. Americas' band ends at 108.0MHz, but
+// its topmost real channel (grid-aligned from fmBandStart) is 107.9MHz.
+uint16_t topOfGrid(const RegionEntry &r) {
+  uint16_t span = r.fmBandEnd - r.fmBandStart;
+  return r.fmBandStart + (span / r.fmStep) * r.fmStep;
+}
 }  // namespace
 
 bool RadioTuner::begin(uint8_t resetPin) {
   load();
+
+  pinMode(Pins::AmpMute, OUTPUT);
+  updateAmpMutePin();  // reflect the persisted mute/volume state right away,
+                        // even if the chip below never responds
 
   int16_t address = si4735_.getDeviceI2CAddress(resetPin);
   available_ = address != 0;
@@ -51,17 +79,25 @@ void RadioTuner::applyRegion() {
   uint16_t freq = prefs.getUShort(kFreqKey, RadioConfig::FmDefaultFreq);
   prefs.end();
   freq = constrain(freq, r.fmBandStart, r.fmBandEnd);
+  freq = snapToGrid(freq, r);
 
-  si4735_.setFM(r.fmBandStart, r.fmBandEnd, freq, RadioConfig::FmStep);
+  si4735_.setFM(r.fmBandStart, r.fmBandEnd, freq, r.fmStep);
 }
 
 void RadioTuner::tune(uint16_t frequency10kHz) {
   rdsFallbackActive_ = false;  // real user action cancels a background sync attempt
+  const RegionEntry &r = region_.current();
+  frequency10kHz = constrain(frequency10kHz, r.fmBandStart, r.fmBandEnd);
+  // Snap onto the region's channel grid -- matters for Americas' 200kHz-
+  // spaced odd-decimal grid (88.1, 88.3, ...): a manual dashboard entry or
+  // an old preset saved before this existed could otherwise land on an
+  // invalid "even" frequency, which would then throw off every subsequent
+  // step/seek too, since those just add/subtract fmStep from wherever the
+  // radio currently sits -- this is what keeps that self-correcting instead.
+  frequency10kHz = snapToGrid(frequency10kHz, r);
   // The preference is persisted either way (matches volume_/muted_ below)
   // so it's already in place for whenever a chip does get connected -- only
   // the actual hardware write is skipped without one.
-  const RegionEntry &r = region_.current();
-  frequency10kHz = constrain(frequency10kHz, r.fmBandStart, r.fmBandEnd);
   Preferences prefs;
   prefs.begin(kNamespace, false);
   prefs.putUShort(kFreqKey, frequency10kHz);
@@ -73,13 +109,18 @@ void RadioTuner::tune(uint16_t frequency10kHz) {
 void RadioTuner::stepUp() {
   const RegionEntry &r = region_.current();
   uint16_t current = frequency10kHz();
-  tune(current >= r.fmBandEnd ? r.fmBandStart : current + RadioConfig::FmStep);
+  uint16_t next = current + r.fmStep;
+  tune(next > r.fmBandEnd ? r.fmBandStart : next);
 }
 
 void RadioTuner::stepDown() {
   const RegionEntry &r = region_.current();
   uint16_t current = frequency10kHz();
-  tune(current <= r.fmBandStart ? r.fmBandEnd : current - RadioConfig::FmStep);
+  // Wraps to the actual topmost grid channel, not fmBandEnd itself -- see
+  // topOfGrid()'s comment. Checked before subtracting since these are
+  // unsigned: current - fmStep would underflow if current is already at
+  // (or within one step of) the band's bottom edge.
+  tune(current < r.fmBandStart + r.fmStep ? topOfGrid(r) : current - r.fmStep);
 }
 
 void RadioTuner::seekUp() {
@@ -91,10 +132,11 @@ void RadioTuner::seekUp() {
   // See Config.h's SeekRssiThreshold/SeekSnrThreshold comment for why this
   // steps and settles itself rather than using the chip's own hardware
   // seek. Bounded to one full pass of the band (never less than 1, even if
-  // FmStep somehow didn't divide it evenly) so this can't loop forever.
-  uint16_t totalSteps = (r.fmBandEnd - r.fmBandStart) / RadioConfig::FmStep + 1;
+  // fmStep somehow didn't divide it evenly) so this can't loop forever.
+  uint16_t totalSteps = (r.fmBandEnd - r.fmBandStart) / r.fmStep + 1;
   for (uint16_t i = 0; i < totalSteps; i++) {
-    candidate = (candidate >= r.fmBandEnd) ? r.fmBandStart : candidate + RadioConfig::FmStep;
+    uint16_t next = candidate + r.fmStep;
+    candidate = (next > r.fmBandEnd) ? r.fmBandStart : next;
     si4735_.setFrequency(candidate);
     delay(RadioConfig::SeekSettleMs);
     if (rssi() >= RadioConfig::SeekRssiThreshold && snr() >= RadioConfig::SeekSnrThreshold) {
@@ -110,9 +152,9 @@ void RadioTuner::seekDown() {
   const RegionEntry &r = region_.current();
   uint16_t start = frequency10kHz();
   uint16_t candidate = start;
-  uint16_t totalSteps = (r.fmBandEnd - r.fmBandStart) / RadioConfig::FmStep + 1;
+  uint16_t totalSteps = (r.fmBandEnd - r.fmBandStart) / r.fmStep + 1;
   for (uint16_t i = 0; i < totalSteps; i++) {
-    candidate = (candidate <= r.fmBandStart) ? r.fmBandEnd : candidate - RadioConfig::FmStep;
+    candidate = (candidate < r.fmBandStart + r.fmStep) ? topOfGrid(r) : candidate - r.fmStep;
     si4735_.setFrequency(candidate);
     delay(RadioConfig::SeekSettleMs);
     if (rssi() >= RadioConfig::SeekRssiThreshold && snr() >= RadioConfig::SeekSnrThreshold) {
@@ -128,7 +170,7 @@ void RadioTuner::climbToLocalPeak(bool seekingUp) {
   uint16_t bestFreq = frequency10kHz();
   uint8_t bestSnr = snr();
   for (;;) {
-    uint16_t next = seekingUp ? bestFreq + RadioConfig::FmStep : bestFreq - RadioConfig::FmStep;
+    uint16_t next = seekingUp ? bestFreq + r.fmStep : bestFreq - r.fmStep;
     if (next < r.fmBandStart || next > r.fmBandEnd) break;  // band edge -- don't wrap mid-climb
     si4735_.setFrequency(next);
     delay(RadioConfig::SeekSettleMs);
@@ -149,6 +191,7 @@ void RadioTuner::setVolumeTransient(uint8_t volume) { applyVolume(volume); }
 
 void RadioTuner::applyVolume(uint8_t volume) {
   volume_ = min<uint8_t>(volume, 63);
+  updateAmpMutePin();
   if (!available_) return;
   si4735_.setVolume(volume_);
 }
@@ -156,9 +199,14 @@ void RadioTuner::applyVolume(uint8_t volume) {
 void RadioTuner::volumeUp() { setVolume(min<uint8_t>(volume_ + 1, 63)); }
 void RadioTuner::volumeDown() { setVolume(volume_ > 0 ? volume_ - 1 : 0); }
 
+void RadioTuner::updateAmpMutePin() {
+  digitalWrite(Pins::AmpMute, (muted_ || volume_ == 0) ? HIGH : LOW);
+}
+
 void RadioTuner::setMuted(bool muted) {
   if (!muted) rdsFallbackActive_ = false;  // unmuting means the user wants to listen now
   muted_ = muted;
+  updateAmpMutePin();
   if (!available_) return;
   si4735_.setAudioMute(muted_);
 }

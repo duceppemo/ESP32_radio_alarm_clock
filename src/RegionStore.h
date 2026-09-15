@@ -11,6 +11,15 @@ struct RegionEntry {
   uint8_t fmDeEmphasis;  // SI4735 setFMDeEmphasis(): 1 = 50us, 2 = 75us
   uint16_t fmBandStart;  // 10kHz units, e.g. 8750 = 87.50 MHz
   uint16_t fmBandEnd;    // 10kHz units
+  // Tuning grid spacing, 10kHz units -- channels fall at fmBandStart + k*fmStep.
+  // Americas' real channel spacing is 200kHz (20), landing exclusively on
+  // odd tenths of a MHz (88.1, 88.3, ...) by regulation -- an "even" 0.1MHz
+  // offset between those isn't a real, legally assigned station. Most of
+  // the rest of the world (and this firmware's Europe/RoW and Japan
+  // entries) allots channels every 100kHz (10) instead, so any tenth is
+  // potentially valid there. See RadioTuner::tune()'s grid-snapping comment
+  // for why this actually matters to more than just stepUp()/stepDown().
+  uint16_t fmStep;
   uint8_t amDeEmphasis;  // reserved for future AM support
   uint16_t amStep;       // kHz units, reserved for future AM support
 };

@@ -14,9 +14,10 @@ constexpr const char *kIndexKey = "index";
 // RadioTuner::tune() clamps against the *current* region's band rather
 // than a fixed constant.
 constexpr RegionEntry kRegions[] = {
-    {"Americas", 2, RadioConfig::FmBandStart, RadioConfig::FmBandEnd, 2, 10},
-    {"Europe / Rest of World", 1, RadioConfig::FmBandStart, RadioConfig::FmBandEnd, 1, 9},
-    {"Japan", 1, 7600, 9500, 1, 9},
+    // Americas: real-world 200kHz channel spacing (odd tenths only).
+    {"Americas", 2, RadioConfig::FmBandStart, RadioConfig::FmBandEnd, 20, 2, 10},
+    {"Europe / Rest of World", 1, RadioConfig::FmBandStart, RadioConfig::FmBandEnd, 10, 1, 9},
+    {"Japan", 1, 7600, 9500, 10, 1, 9},
 };
 constexpr uint8_t kRegionCount = sizeof(kRegions) / sizeof(kRegions[0]);
 }  // namespace
