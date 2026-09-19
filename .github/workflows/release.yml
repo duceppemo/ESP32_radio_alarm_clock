@@ -1,0 +1,80 @@
+name: Release
+
+# Triggered by pushing a version tag (e.g. `git tag v0.2.0 && git push origin v0.2.0`),
+# not by every push to master -- a release is a deliberate, versioned act, not
+# something that should happen on every merge.
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write # to create the GitHub Release and upload assets
+
+jobs:
+  build-and-release:
+    name: Build firmware and publish release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+      - run: pip install platformio
+
+      # The tag is the source of truth for what gets published, but
+      # FirmwareVersion in Config.h is what the running device actually
+      # reports (boot screen, dashboard) -- if they drift apart, a release
+      # would carry a different version than the firmware itself claims to
+      # be. Fail loudly rather than publish a mismatched build.
+      - name: Check tag matches FirmwareVersion in Config.h
+        run: |
+          tag_version="${GITHUB_REF_NAME#v}"
+          config_version=$(grep -oP '(?<=FirmwareVersion = ")[^"]+' src/Config.h)
+          if [ "$tag_version" != "$config_version" ]; then
+            echo "Tag $GITHUB_REF_NAME (version $tag_version) does not match" >&2
+            echo "FirmwareVersion \"$config_version\" in src/Config.h -- bump" >&2
+            echo "Config.h and re-tag, or tag the commit that already has it." >&2
+            exit 1
+          fi
+
+      # Same retry as CI's firmware job -- PlatformIO's package registry
+      # occasionally drops a download mid-fetch with no code involved.
+      - name: Build firmware
+        run: |
+          for i in 1 2 3; do
+            pio run -e adafruit_feather_esp32s3_reversetft && exit 0
+            echo "Attempt $i failed, retrying in 15s..."
+            sleep 15
+          done
+          exit 1
+
+      - name: Rename build artifacts
+        run: |
+          build_dir=.pio/build/adafruit_feather_esp32s3_reversetft
+          version="${GITHUB_REF_NAME#v}"
+          cp "$build_dir/firmware.bin" "esp32-alarm-clock-v${version}-ota-update.bin"
+          cp "$build_dir/firmware.factory.bin" "esp32-alarm-clock-v${version}-full-flash.bin"
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          generate_release_notes: true
+          body: |
+            ## Flashing
+
+            - **Already running this clock and it's on WiFi:** download
+              `esp32-alarm-clock-v*-ota-update.bin` and upload it on the
+              dashboard's Firmware update page (`/update`, linked from the
+              WiFi section) -- no USB cable needed.
+            - **First flash, or the OTA page is unreachable:** download
+              `esp32-alarm-clock-v*-full-flash.bin` and write it to the
+              board over USB starting at flash offset `0x0`, e.g.:
+              `esptool.py --chip esp32s3 write_flash 0x0 esp32-alarm-clock-v*-full-flash.bin`
+              (erases and replaces everything, bootloader included -- use
+              this one if you're not sure which to pick).
+          files: |
+            esp32-alarm-clock-v*-ota-update.bin
+            esp32-alarm-clock-v*-full-flash.bin
