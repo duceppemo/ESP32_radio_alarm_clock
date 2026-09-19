@@ -9,13 +9,19 @@ constexpr const char *kIndexKey = "index";
 // POSIX TZ strings, from https://github.com/nayarsystems/posix_tz_db (spot
 // check against a canonical source if a listed zone's DST dates look wrong
 // -- transition rules occasionally change by local legislation).
+// Labels follow "Region (City/City)" -- MenuSystem::renderTimezone() splits
+// at the parenthesis to fit the TFT, so keep the parenthetical under ~18
+// characters. The North American zones cover both countries (same DST
+// rules), hence a Canadian and a US city each.
 constexpr TimezoneEntry kTimezones[] = {
     {"UTC", "UTC0"},
-    {"US Eastern (New York)", "EST5EDT,M3.2.0,M11.1.0/2"},
-    {"US Central (Chicago)", "CST6CDT,M3.2.0,M11.1.0/2"},
-    {"US Mountain (Denver)", "MST7MDT,M3.2.0,M11.1.0/2"},
-    {"US Arizona (Phoenix)", "MST7"},
-    {"US Pacific (Los Angeles)", "PST8PDT,M3.2.0,M11.1.0/2"},
+    {"Eastern (New York/Toronto)", "EST5EDT,M3.2.0,M11.1.0/2"},
+    {"Central (Chicago/Winnipeg)", "CST6CDT,M3.2.0,M11.1.0/2"},
+    {"Mountain (Denver/Edmonton)", "MST7MDT,M3.2.0,M11.1.0/2"},
+    {"Arizona (Phoenix)", "MST7"},
+    {"Pacific (LA/Vancouver)", "PST8PDT,M3.2.0,M11.1.0/2"},
+    {"Atlantic (Halifax)", "AST4ADT,M3.2.0,M11.1.0/2"},
+    {"Newfoundland (St. John's)", "NST3:30NDT,M3.2.0,M11.1.0/2"},
     {"UK/Ireland (London)", "GMT0BST,M3.5.0/1,M10.5.0"},
     {"Central Europe (Paris/Berlin)", "CET-1CEST,M3.5.0,M10.5.0/3"},
     {"Eastern Europe (Athens)", "EET-2EEST,M3.5.0/3,M10.5.0/4"},

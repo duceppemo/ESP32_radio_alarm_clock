@@ -87,11 +87,11 @@ static const char kDashboardHtml[] = R"rawliteral(
   </div>
   <div class="status" id="rdsStatus"></div>
   <label>Tune (MHz)
-    <input type="number" id="tuneInput" step="0.1" min="87.5" max="108.0">
+    <input type="number" id="tuneInput" step="0.1">
   </label>
   <button onclick="tuneRadio()">Tune</button>
   <label>Volume: <span id="volumeValue">--</span></label>
-  <input type="range" id="volumeSlider" min="0" max="63" oninput="setVolume(this.value)">
+  <input type="range" id="volumeSlider" min="0" max="63" oninput="setVolume(this.value)" onchange="refresh()">
   <button class="secondary" id="muteBtn" onclick="toggleMute()">Mute</button>
   <div id="presets" class="row"></div>
   <label>Sleep timer</label>
@@ -122,7 +122,7 @@ static const char kDashboardHtml[] = R"rawliteral(
 
 <section>
   <h2>Settings backup</h2>
-  <textarea id="settingsBlob" placeholder="Export shows alarms + radio presets/volume as JSON here. Paste a previous export and Apply to restore it."></textarea>
+  <textarea id="settingsBlob" placeholder="Export shows alarms, snooze length, timezone, clock format, region, and radio presets/volume/mute as JSON here. Paste a previous export and Apply to restore it.">
   <div class="row">
     <button class="secondary" onclick="exportSettings()">Export</button>
     <button onclick="importSettings()">Apply</button>
@@ -132,9 +132,14 @@ static const char kDashboardHtml[] = R"rawliteral(
 <script>
 const dayLabels = ['Su','Mo','Tu','We','Th','Fr','Sa'];
 
+// A rejected write ({ok:false, error:"..."}) used to be silently ignored --
+// the next poll just snapped the control back to its old value with no
+// hint why. Surface it; callers still get the parsed body either way.
 async function api(path, options) {
   const res = await fetch(path, options);
-  return res.json();
+  const body = await res.json();
+  if (body && body.ok === false && body.error) alert(body.error);
+  return body;
 }
 
 const wakeSources = [['radio', 'Radio'], ['beep', 'Beep'], ['chime', 'Chime']];
@@ -176,8 +181,18 @@ async function refresh() {
     const banner = document.getElementById('credentialBanner');
     if (status.dashboardPassword) {
       banner.style.display = 'block';
-      banner.innerHTML = `<strong>Save this dashboard login</strong> &mdash; you'll need it once connected to WiFi: ` +
-        `username <code>${status.dashboardUsername}</code>, password <code>${status.dashboardPassword}</code>. Change it below under Security.`;
+      // Built with text nodes, not innerHTML -- the username is whatever
+      // was last typed into the Security form, so it must never be
+      // interpreted as markup.
+      banner.replaceChildren();
+      const strong = document.createElement('strong');
+      strong.textContent = 'Save this dashboard login';
+      const user = document.createElement('code');
+      user.textContent = status.dashboardUsername;
+      const pass = document.createElement('code');
+      pass.textContent = status.dashboardPassword;
+      banner.append(strong, " — you'll need it once connected to WiFi: username ", user,
+        ', password ', pass, '. Change it below under Security.');
     } else {
       banner.style.display = 'none';
     }
@@ -194,7 +209,11 @@ async function refresh() {
     const radio = status.radio;
     const regionSelect = document.getElementById('regionSelect');
     if (regionSelect.dataset.loaded) regionSelect.value = radio.regionIndex;
-    document.getElementById('radioFreq').textContent = (radio.frequency10kHz / 100).toFixed(1) + ' MHz';
+    document.getElementById('radioFreq').textContent =
+      (radio.frequency10kHz / 100).toFixed(1) + ' MHz' + (radio.seeking ? ' (seeking…)' : '');
+    const tuneInput = document.getElementById('tuneInput');
+    tuneInput.min = (radio.bandStart10kHz / 100).toFixed(1);
+    tuneInput.max = (radio.bandEnd10kHz / 100).toFixed(1);
     document.getElementById('rdsStatus').textContent =
       [radio.stationName, radio.radioText].filter(Boolean).join(' — ');
     document.getElementById('volumeValue').textContent = radio.volume;
@@ -339,7 +358,23 @@ function tuneRadio() {
   const mhz = parseFloat(document.getElementById('tuneInput').value);
   if (!isNaN(mhz)) radioAction('tune', Math.round(mhz * 100));
 }
-function setVolume(v) { radioAction('volume', parseInt(v, 10)); }
+// The slider's input event fires per pixel of drag -- throttle to one
+// request per 100ms (always sending the latest value) rather than one per
+// event, and skip radioAction()'s own refresh() (the slider's onchange
+// does one once the drag ends).
+let pendingVolume = null;
+let volumeTimer = null;
+function setVolume(v) {
+  pendingVolume = parseInt(v, 10);
+  if (volumeTimer) return;
+  volumeTimer = setTimeout(async () => {
+    volumeTimer = null;
+    const value = pendingVolume;
+    pendingVolume = null;
+    await api('/api/radio', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'volume', value }) });
+  }, 100);
+}
 function toggleMute() { radioAction('toggleMute'); }
 function radioPreset(action, index) { radioAction(action === 'recall' ? 'recallPreset' : 'storePreset', index); }
 

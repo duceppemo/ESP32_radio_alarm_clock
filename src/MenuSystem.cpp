@@ -54,6 +54,11 @@ uint16_t cycleYear(uint16_t year, int8_t direction) {
 
 uint8_t daysInMonth(uint16_t year, uint8_t month) {
   static const uint8_t kDays[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+  // month is usually internal state that's always kept in 1-12 range, but
+  // now.month() from a live RTC read is fair game too (see monthName()'s
+  // own comment) -- a bogus value here shouldn't read off the end of
+  // kDays, so just treat it as the longest possible month instead.
+  if (month < 1 || month > 12) return 31;
   bool leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
   if (month == 2 && leap) return 29;
   return kDays[month - 1];
@@ -62,12 +67,22 @@ uint8_t daysInMonth(uint16_t year, uint8_t month) {
 const char *monthName(uint8_t month) {
   static const char *kNames[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
                                   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+  // month normally comes from either internal state kept in-range, or
+  // now.month() off a live RTC read -- the DS3231 doesn't itself report
+  // I2C failure, so a bad read (a transient NACK on the shared bus, which
+  // five other devices also share) can surface here as an out-of-range
+  // value rather than an error. Bounds-check before indexing rather than
+  // trusting it.
+  if (month < 1 || month > 12) return "---";
   return kNames[month - 1];
 }
 
-// RTClib's DateTime::dayOfTheWeek() returns 0=Sunday.
+// RTClib's DateTime::dayOfTheWeek() returns 0=Sunday. Same bounds-check
+// rationale as monthName() above -- a bad RTC read is the realistic way
+// dow ends up out of the normal 0-6 range.
 const char *dayOfWeekName(uint8_t dow) {
   static const char *kNames[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+  if (dow > 6) return "---";
   return kNames[dow];
 }
 
@@ -165,6 +180,19 @@ void MenuSystem::update(const DateTime &now, const String &wifiStatusLine, bool 
   up_.update();
   down_.update();
 
+  // A ring takes over from whatever screen was up: the full-screen "ALARM"
+  // layout and its tap-to-snooze/hold-to-dismiss handling both live on
+  // Home only, so an alarm firing while the user was mid-tune on the Radio
+  // screen used to just keep showing Radio -- with tap still toggling mute
+  // and hold backing out -- until they found their own way back. Any
+  // in-progress edit (AlarmEdit, SetTime) is discarded, same as its own
+  // hold-to-cancel would.
+  if (alarms_.state() == AlarmState::Ringing && screen_ != MenuScreen::Home) {
+    screen_ = MenuScreen::Home;
+    cursor_ = 0;
+    dirty_ = true;
+  }
+
   handleInput(now);
   render(now, wifiStatusLine);
 }
@@ -235,9 +263,20 @@ void MenuSystem::handleInput(const DateTime &now) {
 
   switch (screen_) {
     case MenuScreen::Home: {
-      if (alarms_.state() != AlarmState::Idle) {
+      if (alarms_.state() == AlarmState::Ringing) {
         if (shortPress) alarms_.snooze(now);
         if (longPress) alarms_.dismiss();
+        return;
+      }
+      if (alarms_.state() == AlarmState::Snoozed && longPress) {
+        // Home's lock-screen while snoozed shows the same navigable UI as
+        // Idle (see renderHome()) -- Up/Down/short-press below behave like
+        // Idle too, so they actually match what's drawn, rather than
+        // being silently swallowed for the whole snooze period. Long-press
+        // is otherwise unused at Home (nothing to back out of), so it
+        // stays a one-press way to fully dismiss the alarm without having
+        // to navigate anywhere first.
+        alarms_.dismiss();
         return;
       }
       if (upTap) cursor_ = (cursor_ + kHomeMenuItems - 1) % kHomeMenuItems;
@@ -291,7 +330,7 @@ void MenuSystem::handleInput(const DateTime &now) {
         int8_t dir = upRepeat ? 1 : -1;
         switch (editField_) {
           case 0:
-            editingAlarm_.enabled = !editingAlarm_.enabled;
+            if (upTap || downTap) editingAlarm_.enabled = !editingAlarm_.enabled;  // toggle: tap only
             break;
           case 1:
             editingAlarm_.hour = (editingAlarm_.hour + 24 + dir) % 24;
@@ -323,28 +362,17 @@ void MenuSystem::handleInput(const DateTime &now) {
 
     case MenuScreen::Radio: {
       if (radio_.available()) {
-        // seekUp()/seekDown() block for up to a couple of seconds -- paint
-        // "Seeking..." right now, before making that call, or the screen
-        // would just look frozen for that whole time. wifiStatusLine is
-        // irrelevant here (renderRadio() never reads it), so "" is fine.
-        // dirty_ is forced true afterward so the render() call already
-        // scheduled after handleInput() returns still redraws the actual
-        // result -- this manual one already consumed dirty_ itself.
+        // seekUp()/seekDown() just start the sweep -- RadioTuner::update()
+        // (main.cpp's fast path) advances it, and render() tracks
+        // radio_.seeking() to show "Seeking..." and redraw the sweeping
+        // frequency as it goes.
         if (upLongHold) {
-          seeking_ = true;
-          render(now, "");
           radio_.seekUp();
-          seeking_ = false;
-          dirty_ = true;
         } else if (upTap) {
           radio_.stepUp();
         }
         if (downLongHold) {
-          seeking_ = true;
-          render(now, "");
           radio_.seekDown();
-          seeking_ = false;
-          dirty_ = true;
         } else if (downTap) {
           radio_.stepDown();
         }
@@ -376,9 +404,19 @@ void MenuSystem::handleInput(const DateTime &now) {
           case 1:
             editingMonth_ = (uint8_t)(((editingMonth_ - 1 + 12 + dir) % 12) + 1);
             break;
-          case 2:
-            editingDay_ = (uint8_t)(((editingDay_ - 1 + 31 + dir) % 31) + 1);
+          case 2: {
+            // Regression: this used to cycle mod a fixed 31 regardless of
+            // the selected month's actual length -- in a 28/30-day month,
+            // pressing Up on the last valid day computed a day number past
+            // the end (e.g. Feb 28 -> 29), which the clamp below then
+            // silently snapped straight back to 28, so Up could never
+            // actually reach day 1. Cycling mod the real month length
+            // instead wraps correctly in both directions.
+            uint8_t maxDayThisMonth = daysInMonth(editingYear_, editingMonth_);
+            editingDay_ =
+                (uint8_t)(((editingDay_ - 1 + maxDayThisMonth + dir) % maxDayThisMonth) + 1);
             break;
+          }
           case 3:
             editingHour_ = (editingHour_ + 24 + dir) % 24;
             break;
@@ -386,7 +424,10 @@ void MenuSystem::handleInput(const DateTime &now) {
             editingMinute_ = (editingMinute_ + 60 + dir) % 60;
             break;
           case 5:
-            timeFormat_.toggle();
+            // A toggle on the auto-repeat schedule flipped back and forth
+            // ~4x/s (each an NVS write) for as long as the button was held
+            // -- tap only, like the Enabled toggle on AlarmEdit ought to be.
+            if (upTap || downTap) timeFormat_.toggle();
             break;
           case 6:
             if (wifiOnline_) {
@@ -451,31 +492,47 @@ void MenuSystem::render(const DateTime &now, const String &wifiStatusLine) {
   static uint8_t lastRadioVolume = 0;
   static bool lastRadioMuted = false;
   static uint16_t lastRadioSleepMinutes = 0;
+  static bool lastRadioSeeking = false;
   bool isRadioScreen = screen_ == MenuScreen::Radio && radio_.available();
   bool radioLive = isRadioScreen && (radio_.volume() != lastRadioVolume ||
                                       radio_.muted() != lastRadioMuted ||
-                                      radio_.sleepTimerRemainingMinutes() != lastRadioSleepMinutes);
+                                      radio_.sleepTimerRemainingMinutes() != lastRadioSleepMinutes ||
+                                      radio_.seeking() != lastRadioSeeking);
 
   // Sig/SNR are real I2C queries (RadioTuner::rssi()/snr()), unlike the
-  // three above -- polling them every fast-path tick would hammer the bus
+  // four above -- polling them every fast-path tick would hammer the bus
   // for no visible benefit, but only refreshing them when something else
   // also changed left them looking frozen between button presses. A plain
-  // timer, independent of any button, is what makes them read live.
+  // timer, independent of any button, is what makes them read live. The
+  // same timer redraws the sweeping frequency during a seek (renderRadio()
+  // shows "Seeking..." in place of Sig/SNR then, so no signal query).
   static uint32_t lastRadioSignalRefreshMs = 0;
   constexpr uint32_t kRadioSignalRefreshMs = 500;
-  bool radioSignalDue = isRadioScreen && !seeking_ &&
-                         millis() - lastRadioSignalRefreshMs >= kRadioSignalRefreshMs;
+  bool radioSignalDue = isRadioScreen && millis() - lastRadioSignalRefreshMs >= kRadioSignalRefreshMs;
+
+  // An alarm starting to ring (or a snooze expiring and re-ringing, or a
+  // dashboard/fast-path dismiss) doesn't come through handleInput() at
+  // all, so nothing else here would ever set dirty_ for it -- an alarm
+  // firing with no button pressed used to just silently never draw the
+  // "ALARM"/Ringing screen (or update Home's status icon back after a
+  // snooze/dismiss) until the next button press happened to redraw
+  // something else first. Same "external state that can change on its
+  // own" treatment as radioLive/radioSignalDue above.
+  static AlarmState lastAlarmState = AlarmState::Idle;
+  bool alarmStateChanged = alarms_.state() != lastAlarmState;
 
   if (!dirty_ && !(isHomeClock && now.minute() != lastClockRedrawMin) && !radioLive &&
-      !radioSignalDue) {
+      !radioSignalDue && !alarmStateChanged) {
     return;
   }
   dirty_ = false;
   lastClockRedrawMin = now.minute();
+  lastAlarmState = alarms_.state();
   if (isRadioScreen) {
     lastRadioVolume = radio_.volume();
     lastRadioMuted = radio_.muted();
     lastRadioSleepMinutes = radio_.sleepTimerRemainingMinutes();
+    lastRadioSeeking = radio_.seeking();
   }
   if (radioSignalDue) lastRadioSignalRefreshMs = millis();
 
@@ -623,9 +680,11 @@ void MenuSystem::renderHome(const DateTime &now) {
   // just the alarm status icon turning orange, so the snooze period doesn't
   // block seeing the actual time. Was both states full-screen before this
   // got reported as too intrusive to sit through for a whole snooze
-  // interval. tap:snooze/hold:dismiss still work identically either way --
-  // see the Home case in handleInput(), which keys off alarms_.state()
-  // directly rather than what's currently drawn.
+  // interval. Input differs to match: while Ringing, tap snoozes and hold
+  // dismisses (nothing else reachable); while Snoozed, Up/Down/tap behave
+  // like Idle (navigate/enter, matching what's actually drawn) and only
+  // hold is repurposed, as a one-press full dismiss -- see the Home case
+  // in handleInput().
   if (alarms_.state() == AlarmState::Ringing) {
     canvas_.setTextColor(ST77XX_RED);
     printHeader(30, 0, "ALARM");
@@ -862,11 +921,7 @@ void MenuSystem::renderRadio() {
   printBold(0, 22, freqBuf);
 
   int16_t y = 46;
-  if (seeking_) {
-    // Immediate feedback that the long press registered -- seekUp()/
-    // seekDown() below block for up to a couple of seconds with nothing
-    // else updating the display in the meantime, so without this the
-    // screen would look frozen/unresponsive during that wait.
+  if (radio_.seeking()) {
     canvas_.setTextColor(ST77XX_ORANGE);
     printBold(0, y, "Seeking...");
   } else {

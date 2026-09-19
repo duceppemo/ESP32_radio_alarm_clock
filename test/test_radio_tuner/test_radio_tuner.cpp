@@ -27,6 +27,26 @@ constexpr uint16_t kFmStep = 20;
 // topOfGrid(): 108.0MHz (RadioConfig::FmBandEnd) itself isn't on-grid once
 // step is 20, so tune()/stepDown()/seekDown() all land/wrap here instead.
 constexpr uint16_t kFmTop = 10790;
+
+// seekUp()/seekDown() only *start* a seek -- update() advances it one
+// candidate per SeekSettleMs (see RadioTuner.h for why it no longer blocks).
+// Drives it to completion the way main.cpp's loop() would, bounded so a
+// seek that somehow never finished fails the test instead of hanging it.
+void runSeek(RadioTuner &radio) {
+  for (int i = 0; i < 2000 && radio.seeking(); i++) {
+    native_fake_millis_value() += RadioConfig::SeekSettleMs;
+    radio.update();
+  }
+  TEST_ASSERT_FALSE_MESSAGE(radio.seeking(), "seek never finished");
+}
+
+// Volume/mute are written to NVS lazily (SettingsFlushDelayMs after the
+// last change, from update()) -- this is what a test that then reloads a
+// fresh instance from NVS has to do first.
+void flushSettings(RadioTuner &radio) {
+  native_fake_millis_value() += RadioConfig::SettingsFlushDelayMs;
+  radio.update();
+}
 }  // namespace
 
 void test_begin_reports_availability_when_the_chip_responds() {
@@ -180,8 +200,82 @@ void test_seek_up_stops_at_the_first_candidate_clearing_both_thresholds() {
   SI4735::setSimulatedSignalAt(target, RadioConfig::SeekRssiThreshold, RadioConfig::SeekSnrThreshold);
 
   radio.seekUp();
+  runSeek(radio);
 
   TEST_ASSERT_EQUAL(target, radio.frequency10kHz());
+}
+
+void test_seek_is_non_blocking_and_advances_one_candidate_per_settle_time() {
+  // Regression: the sweep used to run to completion inside seekUp() itself,
+  // holding the shared state lock for up to ~6s on the 100kHz grids --
+  // past the 5s task watchdog the dashboard's async_tcp task runs under.
+  // Now seekUp() returns immediately with the first candidate on the chip,
+  // and each update() call moves on by at most one candidate, and only
+  // once SeekSettleMs has passed since the last one.
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
+  radio.begin();
+  radio.tune(RadioConfig::FmBandStart);
+  SI4735::setSimulatedRssi(0);
+  SI4735::setSimulatedSnr(0);
+  native_fake_millis_value() = 1000;
+
+  radio.seekUp();
+  TEST_ASSERT_TRUE(radio.seeking());
+  TEST_ASSERT_EQUAL(RadioConfig::FmBandStart + kFmStep, radio.frequency10kHz());
+
+  radio.update();  // no time has passed -- still settling on the first candidate
+  TEST_ASSERT_EQUAL(RadioConfig::FmBandStart + kFmStep, radio.frequency10kHz());
+
+  native_fake_millis_value() += RadioConfig::SeekSettleMs;
+  radio.update();  // settled, read as dead air -> next candidate
+  TEST_ASSERT_EQUAL(RadioConfig::FmBandStart + 2 * kFmStep, radio.frequency10kHz());
+  TEST_ASSERT_TRUE(radio.seeking());
+}
+
+void test_tune_cancels_an_in_progress_seek() {
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
+  radio.begin();
+  radio.tune(RadioConfig::FmBandStart);
+  SI4735::setSimulatedRssi(0);
+  SI4735::setSimulatedSnr(0);
+
+  radio.seekUp();
+  TEST_ASSERT_TRUE(radio.seeking());
+
+  radio.tune(9750);  // user picked a station mid-sweep (preset, dashboard, step)
+  TEST_ASSERT_FALSE(radio.seeking());
+  native_fake_millis_value() += RadioConfig::SeekSettleMs;
+  radio.update();  // must not resume sweeping away from what the user chose
+  TEST_ASSERT_EQUAL(9750, radio.frequency10kHz());
+}
+
+void test_seek_persists_the_found_frequency() {
+  // Regression: seekUp()/seekDown() (via climbToLocalPeak()) used to call
+  // si4735_.setFrequency() directly without ever persisting the result, so
+  // a seeked station reverted to the last explicitly-*tuned* frequency on
+  // reboot or a region switch (both of which re-clamp from NVS, not from
+  // wherever the chip actually is).
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
+  radio.begin();
+  radio.tune(RadioConfig::FmBandStart);
+  SI4735::setSimulatedRssi(0);
+  SI4735::setSimulatedSnr(0);
+  uint16_t target = RadioConfig::FmBandStart + 5 * kFmStep;
+  SI4735::setSimulatedSignalAt(target, RadioConfig::SeekRssiThreshold, RadioConfig::SeekSnrThreshold);
+
+  radio.seekUp();
+  runSeek(radio);
+  TEST_ASSERT_EQUAL(target, radio.frequency10kHz());
+
+  RadioTuner reloaded(region);
+  reloaded.begin();
+  TEST_ASSERT_EQUAL(target, reloaded.frequency10kHz());
 }
 
 void test_seek_up_climbs_past_a_shoulder_to_the_stations_actual_peak() {
@@ -205,6 +299,7 @@ void test_seek_up_climbs_past_a_shoulder_to_the_stations_actual_peak() {
   SI4735::setSimulatedSignalAt(farSide, 22, 6);  // falling off again past the peak
 
   radio.seekUp();
+  runSeek(radio);
 
   TEST_ASSERT_EQUAL(peak, radio.frequency10kHz());
 }
@@ -228,6 +323,7 @@ void test_seek_down_climbs_past_a_shoulder_to_the_stations_actual_peak() {
   SI4735::setSimulatedSignalAt(farSide, 22, 6);
 
   radio.seekDown();
+  runSeek(radio);
 
   TEST_ASSERT_EQUAL(peak, radio.frequency10kHz());
 }
@@ -247,6 +343,7 @@ void test_seek_up_wraps_past_band_end_to_find_a_station_before_the_start() {
   SI4735::setSimulatedSignalAt(target, 50, 20);
 
   radio.seekUp();
+  runSeek(radio);
 
   TEST_ASSERT_EQUAL(target, radio.frequency10kHz());
 }
@@ -266,6 +363,7 @@ void test_seek_down_wraps_past_band_start_to_find_a_station_before_the_end() {
   SI4735::setSimulatedSignalAt(target, 50, 20);
 
   radio.seekDown();
+  runSeek(radio);
 
   TEST_ASSERT_EQUAL(target, radio.frequency10kHz());
 }
@@ -281,6 +379,7 @@ void test_seek_up_returns_to_the_starting_frequency_when_nothing_clears_threshol
   SI4735::setSimulatedSnr(0);
 
   radio.seekUp();
+  runSeek(radio);
 
   TEST_ASSERT_EQUAL(start, radio.frequency10kHz());
 }
@@ -298,6 +397,7 @@ void test_seek_up_requires_both_rssi_and_snr_to_clear_their_thresholds() {
   SI4735::setSimulatedSignalAt(badTarget, 50, 0);
 
   radio.seekUp();
+  runSeek(radio);
 
   TEST_ASSERT_NOT_EQUAL(badTarget, radio.frequency10kHz());
 }
@@ -336,6 +436,7 @@ void test_transient_volume_is_not_persisted() {
     radio.setVolume(40);          // persisted
     radio.setVolumeTransient(10); // NOT persisted -- this is the point of it
     TEST_ASSERT_EQUAL(10, radio.volume());
+    flushSettings(radio);
   }
 
   RegionStore region;
@@ -343,6 +444,139 @@ void test_transient_volume_is_not_persisted() {
   RadioTuner reloaded(region);
   reloaded.begin();
   TEST_ASSERT_EQUAL(40, reloaded.volume());
+}
+
+void test_volume_and_mute_are_persisted_lazily_not_per_change() {
+  // Regression: every setVolume()/setMuted() used to write NVS on the spot
+  // -- with Vol+/Vol- auto-repeating at 150ms and the dashboard slider
+  // firing per pixel, that was dozens of flash writes per gesture. Now the
+  // write waits until the settings have been quiet for SettingsFlushDelayMs.
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
+  radio.begin();
+  native_fake_millis_value() = 1000;
+
+  radio.setVolume(50);
+  radio.setMuted(true);
+  {
+    RadioTuner peek(region);
+    peek.begin();  // reads NVS: nothing flushed yet
+    TEST_ASSERT_EQUAL(RadioConfig::DefaultVolume, peek.volume());
+    TEST_ASSERT_FALSE(peek.muted());
+  }
+
+  native_fake_millis_value() += RadioConfig::SettingsFlushDelayMs - 1;
+  radio.update();  // one ms too early
+  {
+    RadioTuner peek(region);
+    peek.begin();
+    TEST_ASSERT_EQUAL(RadioConfig::DefaultVolume, peek.volume());
+  }
+
+  native_fake_millis_value() += 1;
+  radio.update();  // quiet for the full delay -> flushed, both keys at once
+  RadioTuner reloaded(region);
+  reloaded.begin();
+  TEST_ASSERT_EQUAL(50, reloaded.volume());
+  TEST_ASSERT_TRUE(reloaded.muted());
+}
+
+void test_muting_mid_ramp_persists_the_saved_volume_not_the_transient() {
+  // Regression: save() wrote the *live* volume_, so a mute during a
+  // radio-wake ramp (snooze, dead-air fallback) -- when volume_ is still
+  // on whatever quiet transient step the ramp was at -- persisted that
+  // step. RAM kept the real value, so the next ring that boot was fine, but
+  // a reboot brought the radio back at e.g. 12 instead of 30.
+  {
+    RegionStore region;
+    region.begin();
+    RadioTuner radio(region);
+    radio.begin();
+    radio.setVolume(30);
+    flushSettings(radio);
+    radio.setVolumeTransient(12);  // mid-ramp
+    radio.setMuted(true);          // snooze
+    flushSettings(radio);
+  }
+
+  RegionStore region;
+  region.begin();
+  RadioTuner reloaded(region);
+  reloaded.begin();
+  TEST_ASSERT_EQUAL(30, reloaded.volume());
+  TEST_ASSERT_EQUAL(30, reloaded.persistedVolume());
+  TEST_ASSERT_TRUE(reloaded.muted());
+}
+
+void test_volume_up_mid_ramp_jumps_to_the_saved_volume() {
+  // See volume()'s comment in RadioTuner.h: +1 from a quiet transient step
+  // both barely changed anything audible and *saved* that step as the new
+  // real volume (30 -> 5 from a single press).
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
+  radio.begin();
+  radio.setVolume(30);
+  radio.setVolumeTransient(4);  // ramp start
+
+  radio.volumeUp();
+
+  TEST_ASSERT_EQUAL(30, radio.volume());
+  TEST_ASSERT_EQUAL(30, radio.persistedVolume());
+
+  radio.volumeUp();  // no ramp in effect anymore -> ordinary +1
+  TEST_ASSERT_EQUAL(31, radio.volume());
+  TEST_ASSERT_EQUAL(31, radio.persistedVolume());
+}
+
+void test_volume_down_mid_ramp_steps_from_the_live_value() {
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
+  radio.begin();
+  radio.setVolume(30);
+  radio.setVolumeTransient(10);
+
+  radio.volumeDown();  // quieter than what's actually playing, not 29
+
+  TEST_ASSERT_EQUAL(9, radio.volume());
+  TEST_ASSERT_EQUAL(9, radio.persistedVolume());
+}
+
+// persistedVolume() tracks only what setVolume() explicitly set -- never
+// touched by setVolumeTransient(), unlike volume() itself. This is what
+// WakeController's sunrise ramp targets, specifically so it can't get
+// dragged down to whatever quiet transient step a snooze happened to
+// interrupt it at (see WakeController.cpp's own tests for that scenario).
+void test_persisted_volume_is_not_affected_by_transient_changes() {
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
+  radio.begin();
+
+  radio.setVolume(40);
+  radio.setVolumeTransient(10);
+
+  TEST_ASSERT_EQUAL(10, radio.volume());           // live value follows the transient set
+  TEST_ASSERT_EQUAL(40, radio.persistedVolume());  // real value is untouched
+}
+
+void test_muted_persists_across_instances() {
+  {
+    RegionStore region;
+    region.begin();
+    RadioTuner radio(region);
+    radio.begin();
+    radio.setMuted(true);
+    flushSettings(radio);
+  }
+
+  RegionStore region;
+  region.begin();
+  RadioTuner reloaded(region);
+  reloaded.begin();
+  TEST_ASSERT_TRUE(reloaded.muted());
 }
 
 // --- Amp-mute GPIO (Pins::AmpMute) -- gates an external transistor that
@@ -389,6 +623,7 @@ void test_amp_mute_pin_reflects_persisted_volume_on_begin() {
     RadioTuner radio(region);
     radio.begin();
     radio.setVolume(0);  // persisted
+    flushSettings(radio);
   }
 
   RegionStore region;
@@ -494,6 +729,36 @@ void test_sleep_timer_remaining_minutes_is_exact_at_the_boundary() {
   TEST_ASSERT_EQUAL(1, radio.sleepTimerRemainingMinutes());
 }
 
+void test_sleep_timer_survives_a_millis_rollover() {
+  // Regression: the sleep timer used to store an absolute deadline
+  // (millis() + duration) and compare with a plain millis() >= deadline --
+  // near the ~49.7-day millis() rollover, that sum can overflow uint32_t
+  // and wrap to a small value that reads as "already expired" hours early.
+  // Storing start+duration and comparing via unsigned subtraction (the
+  // same pattern WakeController's ramp already uses) stays correct across
+  // the wrap instead, as long as the timer itself is well under ~49.7 days
+  // (MaxSleepTimerMinutes is 120).
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
+  radio.begin();
+  radio.setMuted(false);
+
+  uint32_t start = 0xFFFFFFFFu - 30000u;  // 30s before millis() wraps around to 0
+  native_fake_millis_value() = start;
+  radio.setSleepTimer(1);  // 1 minute -- deadline is 30s past the wrap
+
+  native_fake_millis_value() = start + 59999u;  // wraps past 0 -- still 1ms early
+  radio.update();
+  TEST_ASSERT_FALSE(radio.muted());
+  TEST_ASSERT_TRUE(radio.sleepTimerActive());
+
+  native_fake_millis_value() = start + 60000u;  // exactly the deadline, post-wrap
+  radio.update();
+  TEST_ASSERT_TRUE(radio.muted());
+  TEST_ASSERT_FALSE(radio.sleepTimerActive());
+}
+
 void test_cancel_sleep_timer_prevents_auto_mute() {
   RegionStore region;
   region.begin();
@@ -555,10 +820,13 @@ void test_nothing_touches_the_driver_when_radio_is_unavailable() {
 
   radio.tune(9500);
   radio.seekUp();
+  TEST_ASSERT_FALSE(radio.seeking());  // nothing to sweep without a chip
   radio.seekDown();
   radio.setVolume(40);
   radio.setMuted(true);
   radio.updateRdsSync(true);
+  native_fake_millis_value() += RadioConfig::SeekSettleMs;
+  radio.update();
 
   // Tracked in the wrapper regardless of hardware, same as BatteryMonitor's
   // pattern for its own unavailable case.
@@ -630,6 +898,31 @@ void test_apply_region_reclamps_frequency_into_the_new_band() {
   radio.applyRegion();
 
   TEST_ASSERT_EQUAL(9500, radio.frequency10kHz());  // clamped to Japan's band top
+}
+
+void test_apply_region_persists_the_reclamped_frequency() {
+  // Regression: applyRegion() used to re-clamp the frequency live on the
+  // chip without ever writing the result back to NVS, so the *next* region
+  // switch (or a reboot while still on the new region) would re-clamp from
+  // the stale pre-switch value all over again instead of from wherever the
+  // chip actually ended up.
+  RegionStore region;
+  region.begin();
+  region.setIndex(1);  // Europe/RoW: 87.5-108.0MHz, same 100kHz grid as Japan below
+  RadioTuner radio(region);
+  radio.begin();
+  radio.tune(9750);  // 97.50MHz
+
+  region.setIndex(2);  // Japan: 76.0-95.0MHz -- 97.50 is out of range
+  radio.applyRegion();  // re-clamps live to 95.00MHz -- and should persist that too
+
+  region.setIndex(1);  // back to Europe/RoW
+  radio.applyRegion();
+
+  // If the Japan re-clamp wasn't persisted, this reads the stale
+  // pre-Japan-switch 97.50MHz back from NVS instead of the 95.00MHz the
+  // chip was actually last sitting on.
+  TEST_ASSERT_EQUAL(9500, radio.frequency10kHz());
 }
 
 void test_tune_clamps_to_the_current_regions_band_not_a_fixed_constant() {
@@ -836,6 +1129,18 @@ void test_decode_rds_group_clears_radiotext_when_the_ab_flag_flips() {
   radio.decodeRdsGroup(raw0);
   TEST_ASSERT_EQUAL_STRING_LEN("HI", radio.radioText(), 2);
 
+  // A second, later segment of the same message A -- segment 5 (index
+  // 10-11) -- so there's stale content further into the buffer than just
+  // index 0 for the flip below to actually have to clear.
+  uint8_t rawStale[13] = {};
+  uint16_t blockBStale = (2u << 12) | (1u << 11) | (0u << 4) | 5;  // still A/B flag 0, segment 5
+  rawStale[6] = (uint8_t)(blockBStale >> 8);
+  rawStale[7] = (uint8_t)(blockBStale & 0xFF);
+  rawStale[10] = 'O';
+  rawStale[11] = 'K';
+  radio.decodeRdsGroup(rawStale);
+  TEST_ASSERT_EQUAL('O', radio.radioText()[10]);
+
   uint8_t raw1[13] = {};
   uint16_t blockB1 = (2u << 12) | (1u << 11) | (1u << 4) | 1;  // A/B flag flips to 1, segment 1
   raw1[6] = (uint8_t)(blockB1 >> 8);
@@ -844,10 +1149,114 @@ void test_decode_rds_group_clears_radiotext_when_the_ab_flag_flips() {
   raw1[11] = 'Y';
   radio.decodeRdsGroup(raw1);
 
-  // The flip clears the message (index 0 goes back to NUL) even though the
-  // new segment's bytes land later in the buffer -- a fresh message starting
-  // mid-buffer must not appear to continue the old one.
+  // The flip clears the *whole* buffer, not just index 0 -- the stale "OK"
+  // from message A's segment 5 (index 10-11) must not survive into message
+  // B just because B's own segments don't happen to touch it. Regression
+  // test: this used to only NUL index 0, so a message shorter than the
+  // previous one left trailing stale characters past its own end.
   TEST_ASSERT_EQUAL_STRING("", radio.radioText());
+  TEST_ASSERT_EQUAL('\0', radio.radioText()[10]);
+  TEST_ASSERT_EQUAL('\0', radio.radioText()[11]);
+}
+
+void test_decode_rds_group_maps_the_end_of_message_marker_to_nul() {
+  // RDS RadioText's own end-of-message marker (0x0D) for a station that
+  // doesn't pad the rest of the buffer with spaces.
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
+  radio.begin();
+
+  uint8_t raw[13] = {};
+  uint16_t blockB = (2u << 12) | (1u << 11) | 0;  // group 2B, segment 0
+  raw[6] = (uint8_t)(blockB >> 8);
+  raw[7] = (uint8_t)(blockB & 0xFF);
+  raw[10] = 'H';
+  raw[11] = 0x0D;
+  radio.decodeRdsGroup(raw);
+
+  TEST_ASSERT_EQUAL_STRING("H", radio.radioText());
+}
+
+void test_decode_rds_group_rejects_uncorrectable_block_b() {
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
+  radio.begin();
+
+  uint8_t raw[13] = {};
+  uint16_t blockB = 0;  // group type 0, segment 0
+  raw[6] = (uint8_t)(blockB >> 8);
+  raw[7] = (uint8_t)(blockB & 0xFF);
+  raw[10] = 'X';
+  raw[11] = 'X';
+  raw[12] = 0x30;  // BLEB (bits 4-5) = 3, uncorrectable
+  radio.decodeRdsGroup(raw);
+
+  // Block B is what the group-type/segment decision itself is read from --
+  // an uncorrectable read of it can't be trusted enough to decode at all.
+  TEST_ASSERT_EQUAL_STRING("", radio.stationName());
+}
+
+void test_decode_rds_group_rejects_uncorrectable_block_d() {
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
+  radio.begin();
+
+  uint8_t raw[13] = {};
+  uint16_t blockB = 0;  // group type 0, segment 0
+  raw[6] = (uint8_t)(blockB >> 8);
+  raw[7] = (uint8_t)(blockB & 0xFF);
+  raw[10] = 'X';
+  raw[11] = 'X';
+  raw[12] = 0x03;  // BLED (bits 0-1) = 3, uncorrectable
+  radio.decodeRdsGroup(raw);
+
+  // Block D supplies characters in every group type here -- uncorrectable
+  // means the two characters it's carrying would just be noise.
+  TEST_ASSERT_EQUAL_STRING("", radio.stationName());
+}
+
+void test_decode_rds_group_rejects_uncorrectable_block_c_for_2a_only() {
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
+  radio.begin();
+
+  uint8_t raw[13] = {};
+  uint16_t blockB = (2u << 12) | (0u << 11) | 0;  // group 2A, segment 0
+  raw[6] = (uint8_t)(blockB >> 8);
+  raw[7] = (uint8_t)(blockB & 0xFF);
+  raw[8] = 'T';
+  raw[9] = 'E';
+  raw[10] = 'S';
+  raw[11] = 'T';
+  raw[12] = 0x0C;  // BLEC (bits 2-3) = 3, uncorrectable -- only matters for 2A
+  radio.decodeRdsGroup(raw);
+
+  TEST_ASSERT_EQUAL_STRING("", radio.radioText());
+}
+
+void test_decode_rds_group_block_c_error_does_not_block_ps_name() {
+  // BLEC only matters for 2A's own Block C characters -- a group-0 (PS
+  // name) decode never reads Block C, so an uncorrectable Block C on an
+  // otherwise-clean group-0 read must not get rejected because of it.
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
+  radio.begin();
+
+  uint8_t raw[13] = {};
+  uint16_t blockB = 0;  // group type 0, segment 0
+  raw[6] = (uint8_t)(blockB >> 8);
+  raw[7] = (uint8_t)(blockB & 0xFF);
+  raw[10] = 'X';
+  raw[11] = 'X';
+  raw[12] = 0x0C;  // BLEC = 3, irrelevant here
+  radio.decodeRdsGroup(raw);
+
+  TEST_ASSERT_EQUAL_STRING_LEN("XX", radio.stationName(), 2);
 }
 
 void test_decode_rds_group_ignores_an_unrelated_group_type() {
@@ -907,6 +1316,9 @@ int main(int argc, char **argv) {
   RUN_TEST(test_tune_does_not_snap_to_odd_decimals_outside_americas);
   RUN_TEST(test_step_wraps_within_the_current_regions_band_not_a_fixed_constant);
   RUN_TEST(test_seek_up_stops_at_the_first_candidate_clearing_both_thresholds);
+  RUN_TEST(test_seek_is_non_blocking_and_advances_one_candidate_per_settle_time);
+  RUN_TEST(test_tune_cancels_an_in_progress_seek);
+  RUN_TEST(test_seek_persists_the_found_frequency);
   RUN_TEST(test_seek_up_climbs_past_a_shoulder_to_the_stations_actual_peak);
   RUN_TEST(test_seek_down_climbs_past_a_shoulder_to_the_stations_actual_peak);
   RUN_TEST(test_seek_up_wraps_past_band_end_to_find_a_station_before_the_start);
@@ -916,6 +1328,12 @@ int main(int argc, char **argv) {
   RUN_TEST(test_set_volume_clamps_to_63);
   RUN_TEST(test_volume_up_and_down_stop_at_bounds);
   RUN_TEST(test_transient_volume_is_not_persisted);
+  RUN_TEST(test_volume_and_mute_are_persisted_lazily_not_per_change);
+  RUN_TEST(test_muting_mid_ramp_persists_the_saved_volume_not_the_transient);
+  RUN_TEST(test_volume_up_mid_ramp_jumps_to_the_saved_volume);
+  RUN_TEST(test_volume_down_mid_ramp_steps_from_the_live_value);
+  RUN_TEST(test_persisted_volume_is_not_affected_by_transient_changes);
+  RUN_TEST(test_muted_persists_across_instances);
   RUN_TEST(test_amp_mute_pin_is_high_when_muted);
   RUN_TEST(test_amp_mute_pin_is_high_at_zero_volume_even_while_unmuted);
   RUN_TEST(test_amp_mute_pin_reflects_persisted_volume_on_begin);
@@ -925,6 +1343,7 @@ int main(int argc, char **argv) {
   RUN_TEST(test_presets_persist_across_instances);
   RUN_TEST(test_sleep_timer_mutes_only_after_it_elapses);
   RUN_TEST(test_sleep_timer_remaining_minutes_is_exact_at_the_boundary);
+  RUN_TEST(test_sleep_timer_survives_a_millis_rollover);
   RUN_TEST(test_cancel_sleep_timer_prevents_auto_mute);
   RUN_TEST(test_set_sleep_timer_to_zero_behaves_like_cancel);
   RUN_TEST(test_nothing_touches_the_driver_when_radio_is_unavailable);
@@ -933,6 +1352,7 @@ int main(int argc, char **argv) {
   RUN_TEST(test_begin_applies_the_current_region_to_the_chip);
   RUN_TEST(test_changing_region_live_reapplies_de_emphasis);
   RUN_TEST(test_apply_region_reclamps_frequency_into_the_new_band);
+  RUN_TEST(test_apply_region_persists_the_reclamped_frequency);
   RUN_TEST(test_tune_clamps_to_the_current_regions_band_not_a_fixed_constant);
   RUN_TEST(test_rds_sync_is_disabled_and_never_reports_a_time);
   RUN_TEST(test_consume_rds_time_sync_has_nothing_to_consume);
@@ -944,6 +1364,11 @@ int main(int argc, char **argv) {
   RUN_TEST(test_decode_rds_group_assembles_radiotext_2a_via_block_c_and_d);
   RUN_TEST(test_decode_rds_group_assembles_radiotext_2b_via_block_d_only);
   RUN_TEST(test_decode_rds_group_clears_radiotext_when_the_ab_flag_flips);
+  RUN_TEST(test_decode_rds_group_maps_the_end_of_message_marker_to_nul);
+  RUN_TEST(test_decode_rds_group_rejects_uncorrectable_block_b);
+  RUN_TEST(test_decode_rds_group_rejects_uncorrectable_block_d);
+  RUN_TEST(test_decode_rds_group_rejects_uncorrectable_block_c_for_2a_only);
+  RUN_TEST(test_decode_rds_group_block_c_error_does_not_block_ps_name);
   RUN_TEST(test_decode_rds_group_ignores_an_unrelated_group_type);
   RUN_TEST(test_poll_rds_text_does_nothing_while_muted);
   RUN_TEST(test_poll_rds_text_does_nothing_when_radio_is_unavailable);

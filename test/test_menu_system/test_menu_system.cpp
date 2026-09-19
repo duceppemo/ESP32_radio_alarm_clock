@@ -49,6 +49,16 @@ void advance(uint32_t deltaMs) { native_fake_millis_value() += deltaMs; }
 // a phantom repeat firing on whatever field happens to have focus then.
 bool isActiveHighPin(uint8_t pin) { return pin == Pins::MenuUp || pin == Pins::MenuDown; }
 
+// seekUp()/seekDown() only start a sweep -- main.cpp's loop() advances it
+// via RadioTuner::update(). Same helper as test_radio_tuner's.
+void runSeek(RadioTuner &radio) {
+  for (int i = 0; i < 2000 && radio.seeking(); i++) {
+    advance(RadioConfig::SeekSettleMs);
+    radio.update();
+  }
+  TEST_ASSERT_FALSE_MESSAGE(radio.seeking(), "seek never finished");
+}
+
 // Short press: released well under MenuSystem's 1000ms long-press threshold.
 void tap(uint8_t pin, MenuSystem &menu) {
   bool activeHigh = isActiveHighPin(pin);
@@ -292,6 +302,8 @@ void test_radio_screen_long_hold_seeks_instead_of_repeatedly_stepping() {
   SI4735::setSimulatedSignalAt(target, 50, 20);
 
   hold(Pins::MenuUp, menu);  // press fires one immediate step, then the long hold crosses into seek
+  TEST_ASSERT_TRUE(radio.seeking());  // started, not blocked-and-finished
+  runSeek(radio);
 
   // If holding kept auto-repeating stepUp() instead of switching to a seek
   // once the hold crossed the long-press threshold, this would land 2
@@ -344,8 +356,47 @@ void test_radio_screen_long_hold_fires_seek_even_off_the_repeat_schedule() {
   native_fake_digital_state(Pins::MenuUp) = LOW;  // release
   advance(50);
   menu.update(kNow, "");
+  runSeek(radio);
 
   TEST_ASSERT_EQUAL(target, radio.frequency10kHz());
+}
+
+void test_alarm_ringing_on_another_screen_takes_over_home() {
+  // Regression: the ALARM screen and its tap-to-snooze handling only exist
+  // on Home, so an alarm firing while the user sat on the Radio screen kept
+  // showing Radio -- tap toggled mute instead of snoozing.
+  AlarmClock alarms;
+  alarms.begin();
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
+  radio.begin();
+  Adafruit_ST7789 tft(0, 0, 0);
+  TimezoneStore timezone;
+  timezone.begin();
+  TimeFormatStore timeFormat;
+  timeFormat.begin();
+  MenuSystem menu(tft, alarms, radio, nullptr, nullptr, timezone, timeFormat);
+  menu.begin();
+
+  tap(Pins::MenuDown, menu);    // Home cursor: Alarms(0) -> Radio(1)
+  tap(Pins::MenuSelect, menu);  // enter Radio screen
+
+  Alarm a;
+  a.hour = 7;
+  a.minute = 0;
+  a.enabled = true;
+  a.daysMask = 0b1111111;
+  alarms.setAlarm(0, a);
+  alarms.update(kNow);
+  TEST_ASSERT_EQUAL(static_cast<int>(AlarmState::Ringing), static_cast<int>(alarms.state()));
+
+  advance(50);
+  menu.update(kNow, "");  // no button: the ring alone must pull the UI back to Home
+
+  tap(Pins::MenuSelect, menu);  // now a snooze, not Radio's mute toggle
+  TEST_ASSERT_EQUAL(static_cast<int>(AlarmState::Snoozed), static_cast<int>(alarms.state()));
+  TEST_ASSERT_FALSE(radio.muted());
 }
 
 void test_radio_screen_refreshes_signal_periodically_without_a_button_press() {
@@ -512,6 +563,51 @@ void test_set_time_saves_the_new_hour_and_minute() {
   TEST_ASSERT_EQUAL(kNow.year(), rtc.now().year());
   TEST_ASSERT_EQUAL(kNow.month(), rtc.now().month());
   TEST_ASSERT_EQUAL(kNow.day(), rtc.now().day());
+}
+
+void test_set_time_day_field_wraps_to_1_past_the_months_last_day() {
+  // Regression: the day field used to cycle mod a fixed 31 regardless of
+  // the selected month's actual length, so pressing Up on the last valid
+  // day of a shorter month (e.g. Feb 28) computed an out-of-range day that
+  // the automatic clamp then silently snapped straight back -- Up could
+  // never actually wrap around to day 1.
+  AlarmClock alarms;
+  alarms.begin();
+  RegionStore region;
+  region.begin();
+  RadioTuner radio(region);
+  radio.begin();
+  RTC_DS3231 rtc;
+  rtc.adjust(kNow);  // August 25, 2026
+  Adafruit_ST7789 tft(0, 0, 0);
+  TimezoneStore timezone;
+  timezone.begin();
+  TimeFormatStore timeFormat;
+  timeFormat.begin();
+  MenuSystem menu(tft, alarms, radio, nullptr, &rtc, timezone, timeFormat);
+  menu.begin();
+
+  tap(Pins::MenuDown, menu);    // Home cursor: Alarms(0) -> Radio(1)
+  tap(Pins::MenuDown, menu);    // Radio(1) -> WiFi(2)
+  tap(Pins::MenuDown, menu);    // WiFi(2) -> Time(3)
+  tap(Pins::MenuSelect, menu);  // enter Set Time, field 0 = Year
+  tap(Pins::MenuSelect, menu);  // -> field 1 = Month (starts at August)
+
+  for (int i = 0; i < 6; i++) tap(Pins::MenuDown, menu);  // August -> February
+
+  tap(Pins::MenuSelect, menu);  // -> field 2 = Day (starts at 25, unaffected -- 25 <= 28)
+  for (int i = 0; i < 3; i++) tap(Pins::MenuUp, menu);  // 25 -> 26 -> 27 -> 28 (Feb's last day)
+  tap(Pins::MenuUp, menu);  // one more -- should wrap to 1, not stay stuck at 28
+
+  tap(Pins::MenuSelect, menu);  // -> field 3 = Hour (left untouched)
+  tap(Pins::MenuSelect, menu);  // -> field 4 = Minute (left untouched)
+  tap(Pins::MenuSelect, menu);  // -> field 5 = Format (left untouched)
+  tap(Pins::MenuSelect, menu);  // -> field 6 = Sync Now (left untouched)
+  tap(Pins::MenuSelect, menu);  // -> field 7 = Save
+  tap(Pins::MenuSelect, menu);  // commit
+
+  TEST_ASSERT_EQUAL(2, rtc.now().month());
+  TEST_ASSERT_EQUAL(1, rtc.now().day());
 }
 
 void test_set_time_format_field_toggles_between_24h_and_12h() {
@@ -769,11 +865,13 @@ int main(int argc, char **argv) {
   RUN_TEST(test_radio_screen_does_nothing_when_no_radio_is_present);
   RUN_TEST(test_radio_screen_long_hold_seeks_instead_of_repeatedly_stepping);
   RUN_TEST(test_radio_screen_long_hold_fires_seek_even_off_the_repeat_schedule);
+  RUN_TEST(test_alarm_ringing_on_another_screen_takes_over_home);
   RUN_TEST(test_radio_screen_refreshes_signal_periodically_without_a_button_press);
   RUN_TEST(test_radio_screen_holding_up_under_the_long_press_threshold_does_not_repeat_step);
   RUN_TEST(test_ringing_alarm_short_press_snoozes);
   RUN_TEST(test_ringing_alarm_long_press_dismisses);
   RUN_TEST(test_set_time_saves_the_new_hour_and_minute);
+  RUN_TEST(test_set_time_day_field_wraps_to_1_past_the_months_last_day);
   RUN_TEST(test_set_time_format_field_toggles_between_24h_and_12h);
   RUN_TEST(test_set_time_sync_now_requests_sync_instead_of_saving);
   RUN_TEST(test_set_time_sync_now_does_nothing_while_offline);

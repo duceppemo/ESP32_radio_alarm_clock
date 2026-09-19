@@ -31,7 +31,24 @@ void AlarmClock::setSnoozeMinutes(uint8_t minutes) {
 
 void AlarmClock::update(const DateTime &now) {
   if (state_ == AlarmState::Snoozed && now.unixtime() >= snoozeUntil_.unixtime()) {
-    state_ = AlarmState::Ringing;
+    // Re-check the snoozed alarm is still enabled before re-ringing it --
+    // it may have been disabled (dashboard or on-device menu) during the
+    // snooze, in which case there's nothing left to ring back to.
+    if (ringingIndex_ >= 0 && ringingIndex_ < count() && alarms_[ringingIndex_].enabled) {
+      state_ = AlarmState::Ringing;
+      ringingSince_ = now;
+    } else {
+      state_ = AlarmState::Idle;
+      ringingIndex_ = -1;
+    }
+    return;
+  }
+
+  if (state_ == AlarmState::Ringing) {
+    if (now.unixtime() - ringingSince_.unixtime() >=
+        (int64_t)AlarmConfig::AutoDismissMinutes * 60) {
+      dismiss();
+    }
     return;
   }
 
@@ -46,6 +63,7 @@ void AlarmClock::update(const DateTime &now) {
         a.activeOn(now.dayOfTheWeek())) {
       state_ = AlarmState::Ringing;
       ringingIndex_ = i;
+      ringingSince_ = now;
       lastTriggerMinute_ = currentMinute;
       return;
     }

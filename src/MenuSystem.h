@@ -168,17 +168,15 @@ class MenuSystem {
   static constexpr uint16_t kLongPressMs = 1000;
 
   // Radio screen: a tap steps by one FmStep; holding past kLongPressMs
-  // without releasing fires a station seek instead, exactly once per hold
+  // without releasing starts a station seek instead, exactly once per hold
   // rather than repeating (deliberately not auto-repeating a step here --
   // see handleInput()). upSeekFired_/downSeekFired_ latch true the moment
   // that happens (same shape as longPressFired_ above) so a still-held
   // button doesn't keep re-seeking once the hold has already fired one.
+  // The seek itself runs in RadioTuner (advanced from main.cpp's fast
+  // path); renderRadio() reads radio_.seeking() to show "Seeking...".
   uint32_t upPressedAtMs_ = 0;
   uint32_t downPressedAtMs_ = 0;
   bool upSeekFired_ = false;
   bool downSeekFired_ = false;
-  // Set for the duration of the blocking seekUp()/seekDown() call so
-  // renderRadio() can show "Seeking..." -- see handleInput()'s Radio case
-  // for the extra manual render() this needs before that call.
-  bool seeking_ = false;
 };

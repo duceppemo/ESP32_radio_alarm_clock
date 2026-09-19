@@ -125,6 +125,88 @@ void test_snooze_holds_then_re_rings_after_snooze_duration() {
   TEST_ASSERT_EQUAL(static_cast<int>(AlarmState::Ringing), static_cast<int>(clock.state()));
 }
 
+void test_disabling_a_snoozed_alarm_prevents_the_re_ring() {
+  // Regression: the snooze-expiry branch used to re-ring unconditionally,
+  // without rechecking whether the alarm was still enabled -- disabling it
+  // (from the dashboard or the on-device menu) during the snooze window
+  // used to have no effect, and it rang again anyway once the snooze timer
+  // elapsed.
+  AlarmClock clock;
+  clock.begin();
+  clock.setSnoozeMinutes(9);
+
+  Alarm a;
+  a.hour = 7;
+  a.minute = 30;
+  a.enabled = true;
+  a.daysMask = kEveryday;
+  clock.setAlarm(0, a);
+
+  DateTime ringTime = tuesdayAt(7, 30);
+  clock.update(ringTime);
+  TEST_ASSERT_EQUAL(static_cast<int>(AlarmState::Ringing), static_cast<int>(clock.state()));
+
+  clock.snooze(ringTime);
+  TEST_ASSERT_EQUAL(static_cast<int>(AlarmState::Snoozed), static_cast<int>(clock.state()));
+
+  a.enabled = false;  // disabled while snoozed
+  clock.setAlarm(0, a);
+
+  clock.update(ringTime + TimeSpan(0, 0, 9, 0));  // snooze elapses
+
+  TEST_ASSERT_EQUAL(static_cast<int>(AlarmState::Idle), static_cast<int>(clock.state()));
+  TEST_ASSERT_EQUAL(-1, clock.ringingAlarmIndex());
+}
+
+void test_unanswered_ring_auto_dismisses_after_the_timeout() {
+  AlarmClock clock;
+  clock.begin();
+
+  Alarm a;
+  a.hour = 7;
+  a.minute = 30;
+  a.enabled = true;
+  a.daysMask = kEveryday;
+  clock.setAlarm(0, a);
+
+  DateTime ringTime = tuesdayAt(7, 30);
+  clock.update(ringTime);
+  TEST_ASSERT_EQUAL(static_cast<int>(AlarmState::Ringing), static_cast<int>(clock.state()));
+
+  clock.update(ringTime + TimeSpan(0, 0, AlarmConfig::AutoDismissMinutes, -1));
+  TEST_ASSERT_EQUAL(static_cast<int>(AlarmState::Ringing), static_cast<int>(clock.state()));
+
+  clock.update(ringTime + TimeSpan(0, 0, AlarmConfig::AutoDismissMinutes, 0));
+  TEST_ASSERT_EQUAL(static_cast<int>(AlarmState::Idle), static_cast<int>(clock.state()));
+  TEST_ASSERT_EQUAL(-1, clock.ringingAlarmIndex());
+}
+
+void test_snooze_re_ring_gets_a_fresh_auto_dismiss_window() {
+  AlarmClock clock;
+  clock.begin();
+  clock.setSnoozeMinutes(9);
+
+  Alarm a;
+  a.hour = 7;
+  a.minute = 30;
+  a.enabled = true;
+  a.daysMask = kEveryday;
+  clock.setAlarm(0, a);
+
+  DateTime ringTime = tuesdayAt(7, 30);
+  clock.update(ringTime);
+  clock.snooze(ringTime);
+  DateTime reRing = ringTime + TimeSpan(0, 0, 9, 0);
+  clock.update(reRing);
+  TEST_ASSERT_EQUAL(static_cast<int>(AlarmState::Ringing), static_cast<int>(clock.state()));
+
+  // Measured from the re-ring, not the original ring.
+  clock.update(reRing + TimeSpan(0, 0, AlarmConfig::AutoDismissMinutes, -1));
+  TEST_ASSERT_EQUAL(static_cast<int>(AlarmState::Ringing), static_cast<int>(clock.state()));
+  clock.update(reRing + TimeSpan(0, 0, AlarmConfig::AutoDismissMinutes, 0));
+  TEST_ASSERT_EQUAL(static_cast<int>(AlarmState::Idle), static_cast<int>(clock.state()));
+}
+
 void test_dismiss_clears_ringing_state() {
   AlarmClock clock;
   clock.begin();
@@ -223,6 +305,9 @@ int main(int argc, char **argv) {
   RUN_TEST(test_does_not_trigger_when_disabled);
   RUN_TEST(test_does_not_retrigger_within_the_same_minute);
   RUN_TEST(test_snooze_holds_then_re_rings_after_snooze_duration);
+  RUN_TEST(test_disabling_a_snoozed_alarm_prevents_the_re_ring);
+  RUN_TEST(test_unanswered_ring_auto_dismisses_after_the_timeout);
+  RUN_TEST(test_snooze_re_ring_gets_a_fresh_auto_dismiss_window);
   RUN_TEST(test_dismiss_clears_ringing_state);
   RUN_TEST(test_earliest_matching_alarm_wins_when_two_share_a_time);
   RUN_TEST(test_set_alarm_clamps_out_of_range_hour_and_minute);

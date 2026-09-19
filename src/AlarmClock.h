@@ -39,7 +39,8 @@ class AlarmClock {
   void setSnoozeMinutes(uint8_t minutes);
 
   // Call once per loop iteration (or at least once per minute) with the
-  // current time to evaluate schedules and expire snoozes.
+  // current time to evaluate schedules, expire snoozes, and auto-dismiss a
+  // ring nobody has answered after AlarmConfig::AutoDismissMinutes.
   void update(const DateTime &now);
 
   void snooze(const DateTime &now);
@@ -59,6 +60,7 @@ class AlarmClock {
   AlarmState state_ = AlarmState::Idle;
   int8_t ringingIndex_ = -1;
   DateTime snoozeUntil_;
+  DateTime ringingSince_;  // for the auto-dismiss timeout; reset on each (re-)ring
   // Guards against re-triggering the same alarm repeatedly within the
   // minute it fires, since update() may be called many times per minute.
   // Holds unixtime()/60 of the last trigger, or -1 before the first one.

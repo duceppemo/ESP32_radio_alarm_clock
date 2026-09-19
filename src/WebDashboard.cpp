@@ -8,12 +8,27 @@
 #include <Preferences.h>
 #include <WiFi.h>
 #include <esp_random.h>
+#include <esp_sntp.h>
 #include <time.h>
 
 #include "DashboardPage.h"
 #include "StateLock.h"
 
 namespace {
+// Written from the SNTP sync callback (which runs on lwIP's tcpip task,
+// not loop()), read from update() -- each is a single aligned 32-bit/bool
+// store, atomic on this core, so no lock needed. File-scope rather than
+// members because the callback takes no user argument.
+volatile bool sSntpEverSynced = false;
+volatile uint32_t sLastSntpSyncMs = 0;
+void onSntpSynced(struct timeval *) {
+  sLastSntpSyncMs = millis();
+  sSntpEverSynced = true;
+}
+bool sntpFresh() {
+  return sSntpEverSynced && millis() - sLastSntpSyncMs <= NetConfig::NtpFreshnessMs;
+}
+
 constexpr const char *kWifiNamespace = "wifi";
 constexpr const char *kSsidKey = "ssid";
 constexpr const char *kPasswordKey = "password";
@@ -69,16 +84,11 @@ void WebDashboard::begin() {
   // (see requireAuth()).
   ElegantOTA.setAuth(adminUsername_.c_str(), adminPassword_.c_str());
 
-  String ssid, password;
-  loadWifiCredentials(ssid, password);
+  loadWifiCredentials(staSsid_, staPassword_);
+  esp_sntp_set_time_sync_notification_cb(onSntpSynced);
 
-  if (ssid.length() > 0 && connectStation(ssid, password)) {
-    apMode_ = false;
-    staSsid_ = ssid;
-    if (MDNS.begin(NetConfig::MdnsHostname)) {
-      MDNS.addService("http", "tcp", 80);
-    }
-    syncTimeFromNtp();
+  if (staSsid_.length() > 0 && connectStation(staSsid_, staPassword_)) {
+    becomeStation();
   } else {
     startAccessPoint();
   }
@@ -91,14 +101,94 @@ void WebDashboard::begin() {
 void WebDashboard::update() {
   // No StateLock here -- this is only ever called from main.cpp's loop(),
   // which already holds one for the whole iteration (see StateLock.h).
-  if (restartAtMs_ != 0 && millis() >= restartAtMs_) {
+  if (restartPending_ && millis() - restartRequestedMs_ >= NetConfig::RestartDelayMs) {
     ESP.restart();
   }
-  if (!apMode_ &&
-      (lastNtpSyncMs_ == 0 || millis() - lastNtpSyncMs_ >= NetConfig::NtpResyncIntervalMs)) {
-    syncTimeFromNtp();
+
+  if (apMode_) {
+    if (staSsid_.length() > 0) {
+      if (staRetryInFlight_ && WiFi.status() == WL_CONNECTED) {
+        Serial.println("Joined the stored network from AP mode");
+        becomeStation();
+      } else if (millis() - lastStaRetryMs_ >= NetConfig::StaRetryIntervalMs) {
+        // Non-blocking, alongside the AP -- see StaRetryIntervalMs. The
+        // WiFi stack keeps trying to associate on its own after this; the
+        // periodic re-issue just covers a stack that gave up.
+        lastStaRetryMs_ = millis();
+        WiFi.mode(WIFI_AP_STA);
+        WiFi.begin(staSsid_.c_str(), staPassword_.c_str());
+        staRetryInFlight_ = true;
+      }
+    }
+  } else {
+    if (WiFi.status() != WL_CONNECTED &&
+        (lastWifiReconnectMs_ == 0 ||
+         millis() - lastWifiReconnectMs_ >= NetConfig::WifiReconnectIntervalMs)) {
+      // Non-blocking -- just (re)starts the association, doesn't wait for
+      // it (unlike connectStation(), which is only used once, at begin()).
+      lastWifiReconnectMs_ = millis();
+      WiFi.reconnect();
+    }
+
+    if (ntpSyncRequested_) {
+      ntpSyncRequested_ = false;
+      startSntp();  // re-applies the TZ rule too, in case that's what changed
+      lastNtpCheckMs_ = millis();
+      reconcileRtcWithNtp();
+    } else if (millis() - lastNtpCheckMs_ >= NetConfig::NtpCheckIntervalMs) {
+      lastNtpCheckMs_ = millis();
+      reconcileRtcWithNtp();
+    }
   }
   ElegantOTA.loop();
+}
+
+void WebDashboard::becomeStation() {
+  apMode_ = false;
+  staRetryInFlight_ = false;
+  WiFi.softAPdisconnect(true);  // no-op when the AP was never up (boot-time join)
+  WiFi.mode(WIFI_STA);
+  if (MDNS.begin(NetConfig::MdnsHostname)) {
+    MDNS.addService("http", "tcp", 80);
+  }
+  startSntp();
+}
+
+void WebDashboard::startSntp() {
+  // Restarts the SNTP client (a fresh request goes out right away) and
+  // sets the TZ rule libc uses for the UTC->local conversion. Doesn't wait
+  // for anything -- the sync lands in onSntpSynced() whenever the server
+  // answers, and reconcileRtcWithNtp() picks it up from there.
+  configTzTime(timezone_.posixString(), NetConfig::NtpServer);
+}
+
+bool WebDashboard::ntpLocalTime(DateTime &out) const {
+  if (!sntpFresh()) return false;
+  struct tm t;
+  if (!getLocalTime(&t, 0)) return false;  // timeout 0: a single non-blocking read
+  out = DateTime(t.tm_year + 1900, t.tm_mon + 1, t.tm_mday, t.tm_hour, t.tm_min, t.tm_sec);
+  return true;
+}
+
+bool WebDashboard::currentTime(DateTime &out) const {
+  if (rtc_ && rtcAvailable_) {
+    out = rtc_->now();
+    return true;
+  }
+  return ntpLocalTime(out);
+}
+
+void WebDashboard::reconcileRtcWithNtp() {
+  if (!rtc_ || !rtcAvailable_) return;
+  DateTime ntpNow;
+  if (!ntpLocalTime(ntpNow)) return;  // no fresh SNTP sync to trust
+  int64_t delta = (int64_t)ntpNow.unixtime() - (int64_t)rtc_->now().unixtime();
+  if (delta >= NetConfig::NtpAdjustThresholdSeconds ||
+      delta <= -NetConfig::NtpAdjustThresholdSeconds) {
+    rtc_->adjust(ntpNow);
+    Serial.printf("RTC adjusted from NTP (%+lld s)\n", (long long)delta);
+  }
+  ntpSyncSucceededOnce_ = true;
 }
 
 String WebDashboard::statusLine() const {
@@ -131,28 +221,6 @@ void WebDashboard::startAccessPoint() {
   WiFi.mode(WIFI_AP);
   WiFi.softAP(NetConfig::ApSsid);
   apMode_ = true;
-}
-
-void WebDashboard::syncTimeFromNtp() {
-  // No StateLock here -- only called from begin() (single-threaded, before
-  // server_.begin() even starts serving requests), update() (already
-  // locked, called only from loop()), and two route handlers (already
-  // locked, see StateLock.h).
-  //
-  // Marked "attempted" up front so a failed sync (e.g. no internet upstream)
-  // doesn't retry every loop tick -- getLocalTime() below blocks for up to
-  // 5s, which would otherwise stall the menu/web server on every iteration.
-  lastNtpSyncMs_ = millis();
-  if (!rtc_ || !rtcAvailable_) return;
-
-  configTzTime(timezone_.posixString(), NetConfig::NtpServer);
-  struct tm timeinfo;
-  if (getLocalTime(&timeinfo, 5000)) {
-    rtc_->adjust(DateTime(timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday,
-                          timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec));
-    ntpSyncSucceededOnce_ = true;
-    Serial.println("RTC synced from NTP");
-  }
 }
 
 void WebDashboard::registerRoutes() {
@@ -214,7 +282,8 @@ void WebDashboard::registerRoutes() {
   server_.on("/api/alarm/snooze", HTTP_POST, [this](AsyncWebServerRequest *request) {
     StateLock lock;
     if (!requireAuth(request)) return;
-    if (rtc_ && rtcAvailable_) alarms_.snooze(rtc_->now());
+    DateTime now;
+    if (currentTime(now)) alarms_.snooze(now);
     request->send(200, "application/json", "{\"ok\":true}");
   });
 
@@ -237,7 +306,8 @@ void WebDashboard::registerRoutes() {
         }
         saveWifiCredentials(ssid, password);
         request->send(200, "application/json", "{\"ok\":true,\"restarting\":true}");
-        restartAtMs_ = millis() + 1500;
+        restartPending_ = true;
+        restartRequestedMs_ = millis();
       });
   wifiHandler->setMethod(HTTP_POST);
   server_.addHandler(wifiHandler);
@@ -277,6 +347,14 @@ void WebDashboard::registerRoutes() {
         JsonArray days = json["days"];
         for (uint8_t i = 0; i < 7 && i < days.size(); i++) {
           if (days[i].as<bool>()) a.daysMask |= (1 << i);
+        }
+        if (a.enabled && a.daysMask == 0) {
+          // An enabled alarm with no active days can never match
+          // activeOn() in AlarmClock::update() -- it would silently sit
+          // enabled forever and never actually ring.
+          request->send(400, "application/json",
+                        "{\"ok\":false,\"error\":\"select at least one day\"}");
+          return;
         }
         alarms_.setAlarm(index, a);
         request->send(200, "application/json", "{\"ok\":true}");
@@ -347,7 +425,7 @@ void WebDashboard::registerRoutes() {
         StateLock lock;
         if (!requireAuth(request)) return;
         if (applySettingsJson(json)) {
-          if (!apMode_) syncTimeFromNtp();
+          requestNtpSync();  // the import may have changed the timezone
           request->send(200, "application/json", "{\"ok\":true}");
         } else {
           request->send(400, "application/json", "{\"ok\":false,\"error\":\"invalid settings\"}");
@@ -366,10 +444,7 @@ void WebDashboard::registerRoutes() {
           return;
         }
         timezone_.setIndex((uint8_t)index);
-        // Take effect right away rather than waiting for the next daily
-        // resync -- harmless if offline, syncTimeFromNtp() already
-        // tolerates that silently.
-        if (!apMode_) syncTimeFromNtp();
+        requestNtpSync();  // re-applies the TZ rule and re-checks the RTC on the next update()
         request->send(200, "application/json", "{\"ok\":true}");
       });
   timezoneHandler->setMethod(HTTP_POST);
@@ -413,8 +488,8 @@ String WebDashboard::buildStatusJson() {
     doc["dashboardUsername"] = adminUsername_;
     doc["dashboardPassword"] = adminPassword_;
   }
-  if (rtc_ && rtcAvailable_) {
-    DateTime now = rtc_->now();
+  DateTime now;
+  if (currentTime(now)) {
     char buf[9];
     snprintf(buf, sizeof(buf), "%02d:%02d:%02d", now.hour(), now.minute(), now.second());
     doc["time"] = buf;
@@ -435,6 +510,11 @@ String WebDashboard::buildStatusJson() {
 
   JsonObject radio = doc["radio"].to<JsonObject>();
   radio["frequency10kHz"] = radio_.frequency10kHz();
+  radio["seeking"] = radio_.seeking();
+  // The tune field's valid range -- Japan's band (76-95MHz) doesn't fit a
+  // hardcoded 87.5-108 input.
+  radio["bandStart10kHz"] = region_.current().fmBandStart;
+  radio["bandEnd10kHz"] = region_.current().fmBandEnd;
   radio["volume"] = radio_.volume();
   radio["muted"] = radio_.muted();
   radio["stationName"] = radio_.stationName();
@@ -511,6 +591,8 @@ String WebDashboard::buildSettingsJson() {
   JsonDocument doc;
   doc["snoozeMinutes"] = alarms_.snoozeMinutes();
   doc["timezoneIndex"] = timezone_.index();
+  doc["is24HourFormat"] = timeFormat_.is24Hour();
+  doc["regionIndex"] = region_.index();
   JsonArray alarmsArr = doc["alarms"].to<JsonArray>();
   for (uint8_t i = 0; i < AlarmClock::count(); i++) {
     const Alarm &a = alarms_.alarm(i);
@@ -523,6 +605,7 @@ String WebDashboard::buildSettingsJson() {
   }
   JsonObject radioObj = doc["radio"].to<JsonObject>();
   radioObj["volume"] = radio_.volume();
+  radioObj["muted"] = radio_.muted();
   JsonArray presets = radioObj["presets"].to<JsonArray>();
   for (uint8_t i = 0; i < radio_.presetCount(); i++) presets.add(radio_.preset(i));
   String out;
@@ -564,6 +647,11 @@ bool WebDashboard::applySettingsJson(JsonVariantConst doc) {
     a.minute = o["minute"] | defaults.minute;
     a.daysMask = o["daysMask"] | defaults.daysMask;
     a.wakeSource = wakeSourceFromName(o["wakeSource"] | "radio");
+    // An enabled alarm imported with no active days could never actually
+    // ring (see the /api/alarms handler's own check on this) -- a settings
+    // restore is best-effort, so rather than aborting the whole import over
+    // one bad entry, just import it disabled.
+    if (a.enabled && a.daysMask == 0) a.enabled = false;
     alarms_.setAlarm(i, a);
   }
 
@@ -578,9 +666,23 @@ bool WebDashboard::applySettingsJson(JsonVariantConst doc) {
     }
   }
 
+  if (!doc["is24HourFormat"].isNull()) {
+    bool is24Hour = doc["is24HourFormat"];
+    if (timeFormat_.is24Hour() != is24Hour) timeFormat_.toggle();
+  }
+
+  if (!doc["regionIndex"].isNull()) {
+    int regionIndex = doc["regionIndex"];
+    if (regionIndex >= 0 && regionIndex < RegionStore::count()) {
+      region_.setIndex((uint8_t)regionIndex);
+      radio_.applyRegion();
+    }
+  }
+
   JsonObjectConst radioObj = doc["radio"];
   if (!radioObj.isNull()) {
     if (!radioObj["volume"].isNull()) radio_.setVolume(radioObj["volume"]);
+    if (!radioObj["muted"].isNull()) radio_.setMuted(radioObj["muted"]);
     JsonArrayConst presets = radioObj["presets"];
     for (uint8_t i = 0; i < radio_.presetCount() && i < presets.size(); i++) {
       radio_.storePreset(i, presets[i]);

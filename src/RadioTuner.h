@@ -44,26 +44,54 @@ class RadioTuner {
   // the opposite end of the band would be surprising rather than useful.
   void stepUp();
   void stepDown();
-  // Steps through the band itself, one FmStep at a time (wrapping at the
-  // edges), settling briefly at each candidate and checking Sig/SNR against
-  // Config.h's SeekRssiThreshold/SeekSnrThreshold -- not the chip's own
-  // hardware seek. See the threshold constants' comment in Config.h for
-  // why: the hardware seek's in-sweep reading proved unreliable under
-  // marginal reception. Once a candidate clears both thresholds,
-  // climbToLocalPeak() steps on a little further to land on the station's
-  // actual peak rather than its leading shoulder (a real station's
-  // response is wider than one FmStep, so the first candidate to clear the
-  // bar is rarely the strongest point). Blocks for up to one full pass of
-  // the band (a few seconds); leaves the frequency wherever it started if
-  // nothing cleared the threshold anywhere.
+  // Starts a software seek: steps through the band one fmStep at a time
+  // (wrapping at the edges), settling briefly at each candidate and
+  // checking Sig/SNR against Config.h's SeekRssiThreshold/SeekSnrThreshold
+  // -- not the chip's own hardware seek. See the threshold constants'
+  // comment in Config.h for why: the hardware seek's in-sweep reading
+  // proved unreliable under marginal reception. Once a candidate clears
+  // both thresholds it keeps stepping a little further to land on the
+  // station's actual peak rather than its leading shoulder (a real
+  // station's response is wider than one fmStep, so the first candidate to
+  // clear the bar is rarely the strongest point). Ends back on the starting
+  // frequency if nothing cleared the threshold anywhere in the band.
+  //
+  // Returns immediately -- the sweep itself is advanced one candidate per
+  // SeekSettleMs by update() (call it every loop iteration), so nothing
+  // holds the shared state lock for the whole sweep. It used to block for
+  // the full pass: 103 steps x 30ms on Americas' grid, but ~206 on the
+  // 100kHz grids -- over 6s, past the 5s task watchdog AsyncTCP's own task
+  // runs under, so a dashboard request that merely *waited* on the lock
+  // during a full sweep (or a seek started from the dashboard, which ran
+  // the sweep on that task directly) rebooted the device. seeking() reports
+  // whether one is in progress; tune() (and therefore stepUp()/stepDown()/
+  // recallPreset()) cancels it.
   void seekUp();
   void seekDown();
+  bool seeking() const { return seekPhase_ != SeekPhase::Idle; }
 
-  void setVolume(uint8_t volume);  // 0-63, persisted
+  void setVolume(uint8_t volume);  // 0-63, persisted (lazily -- see update())
   // Sets the volume without writing to flash -- for the sunrise ramp, which
   // would otherwise hit NVS every second.
   void setVolumeTransient(uint8_t volume);
+  // The live value -- what's actually being sent to the chip right now,
+  // which during a radio-wake ramp is the current (quiet, rising)
+  // transient step, not the user's real setting. Used for on-screen
+  // display and as the -1 base for volumeDown(), so that button feels like
+  // it's adjusting what you're actually hearing. volumeUp() is the
+  // exception while a ramp is holding the live value *below* the saved
+  // one: it jumps straight to the saved volume (i.e. "skip the ramp")
+  // rather than nudging the quiet transient step up by one and, worse,
+  // saving that as the new real volume -- a single press used to turn a
+  // saved 30 into a saved 5.
   uint8_t volume() const { return volume_; }
+  // The last value actually requested via setVolume() (persisted to NVS) --
+  // never touched by setVolumeTransient(), so it survives a sunrise ramp,
+  // a snooze, or a dead-air fallback intact. This is what WakeController
+  // ramps *toward*, specifically so repeatedly snoozing a radio alarm can't
+  // ratchet the target down to whatever quiet step the ramp happened to be
+  // on when it was interrupted.
+  uint8_t persistedVolume() const { return persistedVolume_; }
   void volumeUp();
   void volumeDown();
 
@@ -87,12 +115,15 @@ class RadioTuner {
   // TimezoneStore -- it doesn't know about RadioTuner or touch hardware).
   void applyRegion();
 
-  // Sleep timer: mutes automatically once it elapses. update() must be
-  // called periodically (main.cpp does this on the 1 Hz tick) to expire it.
+  // Sleep timer: mutes automatically once it elapses.
   void setSleepTimer(uint16_t minutes);
   void cancelSleepTimer();
-  bool sleepTimerActive() const { return sleepTimerEndMs_ != 0; }
+  bool sleepTimerActive() const { return sleepTimerDurationMs_ != 0; }
   uint16_t sleepTimerRemainingMinutes() const;
+  // Call every loop iteration: advances an in-progress seek (one candidate
+  // per SeekSettleMs), expires the sleep timer, and flushes pending
+  // volume/mute changes to NVS once they've been quiet for
+  // SettingsFlushDelayMs (see that constant's comment for why not eagerly).
   void update();
 
   // RDS Clock Time (CT) fallback sync -- CURRENTLY DISABLED, see
@@ -152,6 +183,12 @@ class RadioTuner {
   // available_ the rest of the way too: this is a plain GPIO, not I2C, so
   // there's no chip call to skip.
   void updateAmpMutePin();
+  // Writes freq to the persisted tuning-frequency key -- shared by tune()
+  // and by a successful seek (climbToLocalPeak()), which used to set the
+  // chip's frequency directly without ever persisting it, so a seeked
+  // station reverted to the last *tuned* one on reboot or a region switch.
+  void persistFrequency(uint16_t freq);
+  void markSettingsDirty();
   void save();
   void load();
   // Polls the RDS FIFO once; sets rdsTimeReady_ (and cancels an
@@ -165,23 +202,68 @@ class RadioTuner {
   // once already (see updateRdsSync()'s comment). Returns false (raw left
   // untouched) if it gives up within those bounds; never blocks forever.
   bool readRdsGroupSafely(uint8_t raw[13]);
-  // Called once seekUp()/seekDown() finds a candidate clearing both
-  // thresholds -- a real station's response curve is wider than one
-  // FmStep, so the first candidate to clear the bar is often its leading
-  // edge/shoulder, not the peak (confirmed against a live band sweep: e.g.
+
+  // Seek state machine -- see seekUp(). Sweeping: stepping candidate by
+  // candidate until one clears both thresholds. Climbing: that found, keep
+  // stepping in the same direction while SNR keeps improving, then back up
+  // to the best one seen -- a real station's response curve is wider than
+  // one fmStep, so the first candidate to clear the bar is often its
+  // leading shoulder, not the peak (confirmed against a live band sweep:
   // a station peaking at Sig 31/SNR 16 had a neighbor one step earlier
-  // already at Sig 24/SNR 8, well past threshold). Keeps stepping in the
-  // same direction while SNR keeps improving, then backs up to the best
-  // one seen -- a simple local hill-climb, not a second full sweep.
-  void climbToLocalPeak(bool seekingUp);
+  // already at Sig 24/SNR 8, well past threshold). A simple local
+  // hill-climb, not a second full sweep.
+  enum class SeekPhase : uint8_t { Idle, Sweeping, Climbing };
+  void startSeek(bool up);
+  void advanceSeek();
+  void finishSeek(uint16_t freq);
+  uint16_t nextCandidate(uint16_t from, bool up) const;
+
+  struct SignalQuality {
+    uint8_t rssi;
+    uint8_t snr;
+  };
+  // One I2C query (getCurrentReceivedSignalQuality()) populates both RSSI
+  // and SNR -- this reads both from that single query, for the seek loops
+  // (which always want both from the same instant). The public rssi()/
+  // snr() stay independent single-value queries each -- see
+  // test_rssi_queries_fresh_signal_quality_each_call -- since the TFT and
+  // dashboard read them separately, often seconds apart; this is purely an
+  // internal shortcut for seekUp()/seekDown()/climbToLocalPeak(), which
+  // used to call rssi() then snr() back to back and pay for the same
+  // underlying query twice per candidate.
+  SignalQuality readSignalQuality();
 
   SI4735 si4735_;
   RegionStore &region_;
   bool available_ = false;
   uint8_t volume_ = RadioConfig::DefaultVolume;
+  uint8_t persistedVolume_ = RadioConfig::DefaultVolume;
   bool muted_ = false;
   uint16_t presets_[RadioConfig::MaxPresets] = {};
-  uint32_t sleepTimerEndMs_ = 0;  // 0 = inactive
+  // Sleep timer stored as start+duration, not a precomputed absolute
+  // deadline -- millis() + duration can overflow uint32_t and wrap to a
+  // small value near the ~49.7-day millis() rollover, which a plain
+  // millis() >= deadline comparison then reads as "already expired"
+  // hours early. Comparing elapsed = millis() - start against duration
+  // instead relies on unsigned-subtraction wraparound, which stays
+  // correct across that rollover as long as the timer itself is shorter
+  // than ~49.7 days (MaxSleepTimerMinutes is 120).
+  uint32_t sleepTimerStartMs_ = 0;
+  uint32_t sleepTimerDurationMs_ = 0;  // 0 = inactive
+
+  // Set by setVolume()/setMuted(); update() writes NVS once it's been
+  // SettingsFlushDelayMs since the last change.
+  bool settingsDirty_ = false;
+  uint32_t settingsChangedMs_ = 0;
+
+  SeekPhase seekPhase_ = SeekPhase::Idle;
+  bool seekUp_ = true;
+  uint16_t seekStartFreq_ = 0;     // where to return to if nothing's found
+  uint16_t seekCandidate_ = 0;     // the frequency currently settling on the chip
+  uint16_t seekStepsLeft_ = 0;     // bounded to one full pass of the band
+  uint16_t seekBestFreq_ = 0;      // Climbing: best so far
+  uint8_t seekBestSnr_ = 0;
+  uint32_t seekStepMs_ = 0;        // when seekCandidate_ was set, for the settle wait
 
   bool rdsFallbackActive_ = false;
   uint32_t rdsFallbackStartMs_ = 0;

@@ -208,31 +208,37 @@ void setup() {
   delay(8000);  // leave the bring-up status readable before the menu takes over
 }
 
-void loop() {
-  // Held for the whole iteration -- see StateLock.h. Keeps this entire
-  // function mutually exclusive with every WebDashboard route handler,
-  // which runs on AsyncTCP's own task, not this one.
-  StateLock lock;
-
+// Everything loop() used to do directly, now split out so loop() itself can
+// release StateLock (by letting this return, ending the block that scopes
+// it -- see loop()) before yielding, rather than while still holding it.
+static void loopBody() {
   // Fast path: keeps menu button response, the web server, and any playing
   // alarm tone snappy.
   dashboard.update();
-  menu.update(cachedNow, dashboard.statusLine(), dashboard.isOnline());
-  // "Sync Now" on the Date & Time screen: blocks for up to 5s (same as the
-  // automatic daily resync already does from within this same locked
-  // loop() body), so skip it outright if we're not even online rather than
-  // block pointlessly. MenuSystem also greys the row out and won't raise
-  // the request at all while offline, but isOnline() can still have
-  // flipped between that check and this one.
-  if (menu.consumeNtpSyncRequest() && dashboard.isOnline()) {
-    dashboard.syncTimeFromNtp();
+  // dashboard.statusLine() builds a new String every call (a few
+  // concatenations) but only actually gets read by MenuSystem's WifiInfo
+  // screen -- recomputing it on every one of these fast-path iterations
+  // (potentially thousands/sec) was pure heap churn for a value that only
+  // meaningfully changes when the WiFi connection state does. Cached and
+  // refreshed on the same 1Hz cadence as the slow-tick block below instead.
+  static String cachedStatusLine;
+  static uint32_t lastStatusLineMs = 0;
+  if (millis() - lastStatusLineMs >= 1000) {
+    cachedStatusLine = dashboard.statusLine();
+    lastStatusLineMs = millis();
   }
+  menu.update(cachedNow, cachedStatusLine, dashboard.isOnline());
+  if (menu.consumeNtpSyncRequest()) dashboard.requestNtpSync();  // "Sync Now" -- non-blocking
   wakeController.tickFast();
+  radioTuner.update();  // advances a seek one candidate at a time -- must run on the fast path
 
   volumeUpButton.update();
   volumeDownButton.update();
-  if (volumeUpButton.justPressed()) radioTuner.volumeUp();
-  if (volumeDownButton.justPressed()) radioTuner.volumeDown();
+  // triggered(), not justPressed() -- auto-repeats while held (same as the
+  // on-device menu's own Up/Down handling), instead of needing a fresh tap
+  // per step.
+  if (volumeUpButton.triggered()) radioTuner.volumeUp();
+  if (volumeDownButton.triggered()) radioTuner.volumeDown();
 
   snoozeButton.update();
   if (snoozeButton.justPressed()) snoozeController.onSnoozePressed(cachedNow);
@@ -244,7 +250,6 @@ void loop() {
   }
   lastTickMs = nowMs;
 
-  radioTuner.update();  // expires the sleep timer
   radioTuner.pollRdsText();  // station name / RadioText -- see RadioTuner.h
 
   // RDS Clock Time fallback: currently disabled -- see
@@ -259,16 +264,40 @@ void loop() {
     Serial.println("RTC synced from RDS CT (fallback)");
   }
 
+  // The RTC is the clock; without one (rtc.begin() failed, or the chip fell
+  // off the I2C bus), the ESP's own NTP-kept clock stands in so alarms
+  // still fire and the 7-segment still shows something -- rather than the
+  // schedule silently going dead. Neither: leave cachedNow where it was.
+  bool haveTime = false;
   if (rtcOk) {
     cachedNow = rtc.now();
+    haveTime = true;
+  } else if (dashboard.ntpLocalTime(cachedNow)) {
+    haveTime = true;
+  }
+
+  if (haveTime) {
     alarmClock.update(cachedNow);
     wakeController.tickSlow(cachedNow);
     Serial.printf("%02d:%02d:%02d\n", cachedNow.hour(), cachedNow.minute(), cachedNow.second());
 
-    if (sevenSegmentOk && alarmClock.state() == AlarmState::Idle) {
+    // Keeps ticking through Ringing/Snoozed too, not just Idle -- it used
+    // to freeze on whatever it last showed for the whole ring/snooze
+    // period (colon included), while the TFT's Home screen kept its clock
+    // live throughout. The TFT's own full-screen "ALARM" takeover already
+    // makes Ringing unmistakable; this is just the clock continuing to be
+    // a clock.
+    if (sevenSegmentOk) {
       bool pm = cachedNow.hour() >= 12;
       if (timeFormat.is24Hour()) {
-        sevenSegment.print(cachedNow.hour() * 100 + cachedNow.minute(), DEC);
+        // Regression: sevenSegment.print(hour*100+minute, DEC) blanks
+        // leading positions with no digit of their own -- hours 0-9 lost
+        // their leading zero ("9:05" rather than "09:05", inconsistent
+        // with the TFT), and at exactly midnight (0:0x) it printed just
+        // one trailing digit. Writing each digit explicitly, the same way
+        // the 12h branch below already does, always shows both.
+        sevenSegment.writeDigitNum(0, cachedNow.hour() / 10);
+        sevenSegment.writeDigitNum(1, cachedNow.hour() % 10);
       } else {
         // Leading hour digit is blanked rather than shown as 0 (e.g. "9:05",
         // not "09:05").
@@ -280,9 +309,9 @@ void loop() {
           sevenSegment.writeDigitRaw(0, 0x00);
         }
         sevenSegment.writeDigitNum(1, displayHour % 10);
-        sevenSegment.writeDigitNum(3, cachedNow.minute() / 10);
-        sevenSegment.writeDigitNum(4, cachedNow.minute() % 10);
       }
+      sevenSegment.writeDigitNum(3, cachedNow.minute() / 10);
+      sevenSegment.writeDigitNum(4, cachedNow.minute() % 10);
 
       bool anyAlarmEnabled = false;
       for (uint8_t i = 0; i < AlarmClock::count(); i++) {
@@ -314,4 +343,28 @@ void loop() {
     analogWrite(TFT_BACKLITE, DisplayDimmer::tftBacklightFor(lux));
     if (sevenSegmentOk) sevenSegment.setBrightness(DisplayDimmer::sevenSegmentBrightnessFor(lux));
   }
+}
+
+void loop() {
+  {
+    // Scoped so the lock is released (StateLock's destructor runs) before
+    // the yield below, not after -- see StateLock.h. Keeps loopBody()
+    // mutually exclusive with every WebDashboard route handler, which runs
+    // on AsyncTCP's own task, not this one.
+    StateLock lock;
+    loopBody();
+  }
+  // Arduino's default loopTask calls loop() back-to-back with nothing that
+  // reliably cedes the CPU in between, so on a single core (or a
+  // same-core-as-async_tcp setup) the async_tcp task woken by releasing
+  // the lock above almost never actually wins the race to take it before
+  // this task immediately re-takes it on the next iteration -- giving a
+  // mutex makes the woken task *eligible*, not scheduled next. That
+  // starvation is the real reason a couple of dashboard-poll-vs-loop()
+  // contention issues elsewhere needed their own workarounds (throttling
+  // the dashboard's poll interval, capping blocking calls) instead of just
+  // not starving the other task's chance to run in the first place. A 1ms
+  // delay here (which yields to the scheduler on ESP32's Arduino core, not
+  // just a busy-wait) gives it that chance every iteration.
+  delay(1);
 }

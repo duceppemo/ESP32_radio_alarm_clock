@@ -9,9 +9,8 @@ constexpr const char *FirmwareVersion = "0.2.0";
 
 // ---------------------------------------------------------------------------
 // Pin assignments off the shared I2C bus (see docs/wiring-diagram.html).
-// Confirmed on real hardware: RadioReset, SnoozeButton, VolumeUp, VolumeDown
-// (all wired and working as assigned below). Buzzer is still an unconfirmed
-// placeholder -- not yet wired/tested.
+// All confirmed on real hardware: RadioReset, SnoozeButton, VolumeUp,
+// VolumeDown, AmpMute and Buzzer are wired and working as assigned below.
 //
 // Two independent, non-overlapping audio paths:
 //   - FM/AM playback: SI4730 (analog audio out) -> amp -> speaker. Pure
@@ -32,7 +31,7 @@ constexpr uint8_t VolumeDown = A3;
 // Driven by RadioTuner whenever muted or at volume 0 -- see
 // RadioTuner::updateAmpMutePin().
 constexpr uint8_t AmpMute = A4;
-constexpr uint8_t Buzzer = A5;  // unconfirmed -- not yet wired/tested
+constexpr uint8_t Buzzer = A5;  // piezo, driven by AlarmSound via tone()
 
 // Onboard menu buttons (Adafruit ESP32-S3 Reverse TFT Feather pinout) --
 // confirmed working on real hardware, including D1/D2's INPUT_PULLDOWN
@@ -58,9 +57,17 @@ constexpr uint8_t WakeRampStartVolume = 4;
 
 // If waking via radio, how long to let it ramp before checking for a
 // station; below this RSSI it's treated as dead air and AlarmSound takes
-// over instead. RSSI scale/threshold are unverified without real hardware.
+// over instead. The threshold hasn't been tuned against real stations yet
+// -- RadioConfig::SeekRssiThreshold's comment has the measured Sig range
+// (16-29 for "decent" stations) to calibrate against if it misfires.
 constexpr uint16_t DeadAirCheckDelaySeconds = 5;
 constexpr uint8_t DeadAirRssiThreshold = 10;
+
+// A ring nobody answers (not home, slept through it in another room) stops
+// on its own after this long, rather than blaring until someone finds it --
+// same as a commercial clock's auto-off. Measured per ring: a snooze that
+// re-rings gets a fresh window.
+constexpr uint16_t AutoDismissMinutes = 60;
 }  // namespace AlarmConfig
 
 namespace RadioConfig {
@@ -114,10 +121,23 @@ constexpr uint16_t SeekSettleMs = 30;
 constexpr uint16_t RdsCtsPollDelayUs = 300;
 constexpr uint8_t RdsMaxCtsPolls = 50;  // ~15ms worst case
 constexpr uint8_t RdsMaxErrRetries = 3;
+// Groups drained from the RDS FIFO per pollRdsText() call (bounded, so a
+// chip that kept reporting more pending forever couldn't loop this
+// unboundedly) -- 25 matches the SI4735 family's own FIFO depth, so one
+// poll can always fully catch up even if a whole second's worth (~11
+// groups) arrived since the last one.
+constexpr uint8_t RdsMaxGroupsPerPoll = 25;
 
 constexpr uint8_t DefaultVolume = 30;    // SI4735 volume range is 0-63
 constexpr uint8_t MaxPresets = 6;
 constexpr uint16_t MaxSleepTimerMinutes = 120;
+
+// Volume/mute changes are written to NVS this long after the *last* change
+// rather than on every one -- the Vol+/Vol- buttons auto-repeat every
+// 150ms and the dashboard's slider fires per pixel of drag, so persisting
+// eagerly meant dozens of flash writes (each a few ms, under the shared
+// state lock) per gesture. See RadioTuner::update().
+constexpr uint32_t SettingsFlushDelayMs = 1000;
 
 // The snooze button doubles as a sleep-timer toggle when pressed while no
 // alarm is ringing and the radio is on -- see SnoozeController.
@@ -145,8 +165,41 @@ constexpr uint32_t StaConnectTimeoutMs = 15000;
 
 // NTP keeps the DS3231 accurate. Timezone (including DST rule, where
 // applicable) is a user setting -- see TimezoneStore -- not hardcoded here.
+//
+// How it works (WebDashboard::update()): the ESP32's own system clock is
+// kept on UTC by the SNTP client in the background (re-polled hourly by
+// lwIP's default), and libc converts it to local time through the POSIX TZ
+// rule, DST included. Every NtpCheckIntervalMs the RTC is compared against
+// that local time and adjusted only if they differ by at least
+// NtpAdjustThresholdSeconds -- so a DST transition is picked up within
+// one interval of the moment it happens, with no blocking wait and no
+// special-casing of the transition hour. The comparison is skipped unless
+// SNTP has actually heard from a server within NtpFreshnessMs: once WiFi
+// drops for long enough, the ESP's software clock drifts worse than the
+// DS3231 does, and copying it over would make the RTC *less* accurate.
 constexpr const char *NtpServer = "pool.ntp.org";
-constexpr uint32_t NtpResyncIntervalMs = 24UL * 60 * 60 * 1000;
+constexpr uint32_t NtpCheckIntervalMs = 10UL * 1000;
+constexpr uint32_t NtpFreshnessMs = 2UL * 60 * 60 * 1000;
+constexpr int32_t NtpAdjustThresholdSeconds = 2;
+
+// How often update() retries WiFi.reconnect() (non-blocking -- just kicks
+// off the association, doesn't wait for it) after the station link drops
+// post-boot (e.g. router reboot). connectStation() only ever runs once, at
+// begin(), so without this the device would otherwise stay disconnected
+// (silently failing every NTP resync) until manually power-cycled.
+constexpr uint32_t WifiReconnectIntervalMs = 30UL * 1000;
+
+// While stuck on the setup AP *with* stored credentials -- the boot-time
+// join failed, typically because the router was still coming back up after
+// the same power cut that rebooted the clock -- update() re-attempts the
+// station join this often (non-blocking, alongside the AP) and drops the AP
+// once it succeeds. Without this the device stayed in AP mode until
+// manually power-cycled.
+constexpr uint32_t StaRetryIntervalMs = 60UL * 1000;
+
+// Delay between acknowledging a WiFi-credential change and restarting, so
+// the HTTP response actually makes it out first.
+constexpr uint32_t RestartDelayMs = 1500;
 
 // Dashboard/OTA login. The username defaults to this constant, but the
 // password is never a fixed value baked into every unit -- see
@@ -163,8 +216,9 @@ constexpr uint8_t LowPercentThreshold = 15;
 namespace DisplayConfig {
 // Ambient-light thresholds (VEML7700 lux reading) the auto-dim curve is
 // linear between -- at/below Dim, displays sit at their minimum; at/above
-// Bright, full brightness. Unverified against a real room; expect to retune
-// once hardware exists, same as the dead-air RSSI threshold.
+// Bright, full brightness. Not yet tuned against the room it'll live in
+// (the boot log prints the live lux reading once a second to help with
+// that).
 constexpr float DimLuxThreshold = 5.0f;
 constexpr float BrightLuxThreshold = 200.0f;
 
